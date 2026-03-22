@@ -1,3 +1,9 @@
+dataset_type: short_metaworld
+data_root: data/short-metaworld-vla
+train_jsonl: ""
+val_jsonl: ""
+val_ratio: 0.1
+
 vision_model_name: google/siglip2-base-patch16-224
 text_model_name: distilbert-base-uncased
 image_size: 224
@@ -5,11 +11,11 @@ freeze_vision: true
 freeze_text: true
 
 # Data
-action_dim: 7
-num_workers: 2
+action_dim: 4
+num_workers: 3
 
 # Optimization
-epochs: 30
+epochs: 5
 batch_size: 8
 grad_accum_steps: 4
 learning_rate: 1e-4
@@ -20,5 +26,5 @@ use_fp16: true
 # Runtime
 seed: 42
 device: cuda
-out_dir: vla_stack/checkpoints
+out_dir: checkpoints
 save_best_by_val: true
