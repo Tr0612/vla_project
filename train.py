@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import numpy as np
 import torch
 from torch import nn
 from torch.optim import AdamW
@@ -54,17 +55,62 @@ def build_collate_fn(processor, tokenizer, image_size: int):
     return collate
 
 
-def evaluate(model, loader, loss_fn, device, use_fp16: bool) -> float:
+def compute_action_stats(dataset, action_dim: int, eps: float) -> tuple[torch.Tensor, torch.Tensor]:
+    sum_vec = torch.zeros(action_dim, dtype=torch.float64)
+    sum_sq_vec = torch.zeros(action_dim, dtype=torch.float64)
+
+    n = len(dataset)
+    for i in range(n):
+        if hasattr(dataset, "get_action"):
+            a = dataset.get_action(i).to(dtype=torch.float64)
+        else:
+            a = dataset[i]["action"].to(dtype=torch.float64)
+
+        if a.numel() != action_dim:
+            raise ValueError(f"Expected action_dim={action_dim}, got {a.numel()} at idx={i}")
+
+        sum_vec += a
+        sum_sq_vec += a * a
+
+    mean = sum_vec / max(n, 1)
+    var = (sum_sq_vec / max(n, 1)) - (mean * mean)
+    var = torch.clamp(var, min=0.0)
+    std = torch.sqrt(var)
+    std = torch.clamp(std, min=eps)
+
+    return mean.to(torch.float32), std.to(torch.float32)
+
+
+def normalize_actions(actions: torch.Tensor, mean: torch.Tensor, std: torch.Tensor) -> torch.Tensor:
+    return (actions - mean) / std
+
+
+def evaluate(
+    model,
+    loader,
+    loss_fn,
+    device,
+    use_fp16: bool,
+    normalize_targets: bool,
+    action_mean: torch.Tensor,
+    action_std: torch.Tensor,
+) -> float:
     model.eval()
     total_loss = 0.0
     total_count = 0
 
     with torch.no_grad():
-        for batch in loader:
+        for step,batch in enumerate(loader,start=1):
             pixel_values = batch["pixel_values"].to(device)
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
             target_actions = batch["actions"].to(device)
+
+            target_for_loss = (
+                normalize_actions(target_actions, action_mean, action_std)
+                if normalize_targets
+                else target_actions
+            )
 
             with torch.autocast(
                 device_type="cuda",
@@ -72,7 +118,10 @@ def evaluate(model, loader, loss_fn, device, use_fp16: bool) -> float:
                 enabled=(use_fp16 and device.type == "cuda"),
             ):
                 pred_actions = model(pixel_values, input_ids, attention_mask)
-                loss = loss_fn(pred_actions, target_actions)
+                if step == 1:
+                    print(f"pred std: {pred_actions.detach().float().std().item():.6f}", flush=True)
+                    print(f"gt std: {target_for_loss.detach().float().std().item():.6f}", flush=True)
+                loss = loss_fn(pred_actions, target_for_loss)
 
             bs = target_actions.size(0)
             total_loss += loss.item() * bs
@@ -137,6 +186,14 @@ def main() -> None:
         val_ds = VLAJsonlDataset(cfg.val_jsonl, action_dim=cfg.action_dim)
 
     print(f"Train samples: {len(train_ds)} | Val samples: {len(val_ds)}", flush=True)
+
+    action_mean, action_std = compute_action_stats(train_ds, cfg.action_dim, cfg.action_norm_eps)
+    print(f"Action mean: {action_mean.tolist()}", flush=True)
+    print(f"Action std: {action_std.tolist()}", flush=True)
+
+    action_mean = action_mean.to(device)
+    action_std = action_std.to(device)
+
     print("Loading processor/tokenizer...", flush=True)
     processor = AutoImageProcessor.from_pretrained(cfg.vision_model_name)
     tokenizer = AutoTokenizer.from_pretrained(cfg.text_model_name)
@@ -165,12 +222,14 @@ def main() -> None:
     trainable_params = [p for p in model.parameters() if p.requires_grad]
 
     optimizer = AdamW(trainable_params, lr=cfg.learning_rate, weight_decay=cfg.weight_decay)
-    loss_fn = nn.SmoothL1Loss()
+    loss_fn = nn.MSELoss()
     scaler = torch.amp.GradScaler(device="cuda", enabled=(cfg.use_fp16 and device.type == "cuda"))
 
     out_dir = Path(cfg.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     cfg.save_json(out_dir / "train_config.json")
+    np.save(out_dir / "action_mean.npy", action_mean.detach().cpu().numpy())
+    np.save(out_dir / "action_std.npy", action_std.detach().cpu().numpy())
 
     best_val = float("inf")
 
@@ -187,13 +246,19 @@ def main() -> None:
             attention_mask = batch["attention_mask"].to(device)
             target_actions = batch["actions"].to(device)
 
+            target_for_loss = (
+                normalize_actions(target_actions, action_mean, action_std)
+                if cfg.normalize_action_targets
+                else target_actions
+            )
+
             with torch.autocast(
                 device_type="cuda",
                 dtype=torch.float16,
                 enabled=(cfg.use_fp16 and device.type == "cuda"),
             ):
                 pred_actions = model(pixel_values, input_ids, attention_mask)
-                loss = loss_fn(pred_actions, target_actions)
+                loss = loss_fn(pred_actions, target_for_loss)
                 loss = loss / cfg.grad_accum_steps
 
             scaler.scale(loss).backward()
@@ -209,37 +274,40 @@ def main() -> None:
             steps += 1
 
         train_loss = running_loss / max(steps, 1)
-        val_loss = evaluate(model, val_loader, loss_fn, device, cfg.use_fp16)
+        val_loss = evaluate(
+            model,
+            val_loader,
+            loss_fn,
+            device,
+            cfg.use_fp16,
+            cfg.normalize_action_targets,
+            action_mean,
+            action_std,
+        )
 
         print(f"epoch={epoch + 1}/{cfg.epochs} train_loss={train_loss:.6f} val_loss={val_loss:.6f}")
 
-        latest_path = out_dir / "latest.pt"
-        torch.save(
-            {
-                "epoch": epoch + 1,
-                "model": model.state_dict(),
-                "optimizer": optimizer.state_dict(),
-                "cfg": cfg.__dict__,
-                "train_loss": train_loss,
-                "val_loss": val_loss,
+        ckpt_payload = {
+            "epoch": epoch + 1,
+            "model": model.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "cfg": cfg.__dict__,
+            "action_stats": {
+                "mean": action_mean.detach().cpu().tolist(),
+                "std": action_std.detach().cpu().tolist(),
+                "normalized_targets": bool(cfg.normalize_action_targets),
             },
-            latest_path,
-        )
+            "train_loss": train_loss,
+            "val_loss": val_loss,
+        }
+
+        latest_path = out_dir / "latest.pt"
+        torch.save(ckpt_payload, latest_path)
 
         if cfg.save_best_by_val and val_loss < best_val:
             best_val = val_loss
             best_path = out_dir / "best.pt"
-            torch.save(
-                {
-                    "epoch": epoch + 1,
-                    "model": model.state_dict(),
-                    "optimizer": optimizer.state_dict(),
-                    "cfg": cfg.__dict__,
-                    "train_loss": train_loss,
-                    "val_loss": val_loss,
-                },
-                best_path,
-            )
+            torch.save(ckpt_payload, best_path)
             print(f"saved best checkpoint: {best_path} (val_loss={best_val:.6f})")
 
 

@@ -1,0 +1,30 @@
+# Dataset and artifacts
+data/
+checkpoints/
+plots/
+videos/
+media/
+outputs/
+
+# Model/media binaries
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.npy
+*.npz
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.gif
+
+# Python cache and env
+__pycache__/
+*.pyc
+.venv/
+.env
+
+# Tooling/cache
+.cache/
+.DS_Store

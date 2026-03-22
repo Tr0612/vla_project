@@ -47,6 +47,24 @@ python train.py --dataset-type short_metaworld --data-root data/short-metaworld-
 
 python infer.py --ckpt /path/to/best.pt --image /path/to/image.png --instruction "push block to target"
 
+## Visualize Predictions
+
+python viz_actions.py --ckpt checkpoints/best.pt --config default_config.yaml --out-dir plots
+
+Outputs:
+- plots/pred_vs_gt.png
+- plots/mae_per_dim.png
+- plots/pred_actions.npy
+- plots/gt_actions.npy
+
+## Rollout Success (MetaWorld)
+
+python eval_rollout.py --ckpt checkpoints/best.pt --task button-press-topdown-v2 --episodes 20 --max-steps 200
+
+Optional video recording:
+
+python eval_rollout.py --ckpt checkpoints/best.pt --task button-press-topdown-v2 --episodes 5 --record-video videos/rollout.mp4
+
 ## Notes
 
 - action_dim default is 4 (MetaWorld-friendly).

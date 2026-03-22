@@ -47,6 +47,12 @@ class VLAJsonlDataset(Dataset):
     def __len__(self) -> int:
         return len(self.samples)
 
+    def get_action(self, idx: int) -> torch.Tensor:
+        a = torch.tensor(self.samples[idx].action, dtype=torch.float32)
+        if self.action_dim is not None and a.numel() != self.action_dim:
+            raise ValueError(f"Expected action_dim={self.action_dim}, got {a.numel()} at idx={idx}")
+        return a
+
     def __getitem__(self, idx: int) -> dict[str, Any]:
         s = self.samples[idx]
         p = Path(s.image_path)
@@ -54,9 +60,7 @@ class VLAJsonlDataset(Dataset):
             p = self.root / p
 
         image = Image.open(p).convert("RGB")
-        action = torch.tensor(s.action, dtype=torch.float32)
-        if self.action_dim is not None and action.numel() != self.action_dim:
-            raise ValueError(f"Expected action_dim={self.action_dim}, got {action.numel()} at idx={idx}")
+        action = self.get_action(idx)
 
         return {
             "image": image,
@@ -66,16 +70,7 @@ class VLAJsonlDataset(Dataset):
 
 
 class ShortMetaWorldDataset(Dataset):
-    """Loader for folder-based short-MetaWorld data.
-
-    Expected files under data_root:
-    - mt50_task_prompts.json
-    - short-MetaWorld/short-MetaWorld/img_only/<task>/<traj>/<step>.jpg
-    - short-MetaWorld/r3m-processed/r3m_MT10_20/<task>.pkl
-
-    Each sample is a single step with keys:
-    image (PIL), instruction (str), action (torch.float32 tensor)
-    """
+    """Loader for folder-based short-MetaWorld data."""
 
     def __init__(
         self,
@@ -156,9 +151,7 @@ class ShortMetaWorldDataset(Dataset):
             traj_dirs = sorted([p for p in task_img_dir.iterdir() if p.is_dir()], key=lambda p: int(p.name))
 
             for traj_idx, traj_dir in enumerate(traj_dirs):
-                if traj_idx >= len(actions_all):
-                    continue
-                if traj_idx >= len(states_all):
+                if traj_idx >= len(actions_all) or traj_idx >= len(states_all):
                     continue
 
                 img_paths = sorted(traj_dir.glob("*.jpg"), key=lambda p: int(p.stem))
@@ -170,14 +163,13 @@ class ShortMetaWorldDataset(Dataset):
                     continue
 
                 for step_idx in range(min_steps):
-                    action = action_seq[step_idx]
                     samples.append(
                         {
                             "task_name": task_name,
                             "trajectory_id": traj_idx,
                             "step_id": step_idx,
                             "image_path": str(img_paths[step_idx]),
-                            "action": action,
+                            "action": action_seq[step_idx],
                             "instruction": self._get_prompt(task_name),
                         }
                     )
@@ -205,17 +197,21 @@ class ShortMetaWorldDataset(Dataset):
     def __len__(self) -> int:
         return len(self.samples)
 
-    def __getitem__(self, idx: int) -> dict[str, Any]:
+    def get_action(self, idx: int) -> torch.Tensor:
         row = self.samples[idx]
-
-        image = Image.open(row["image_path"]).convert("RGB")
         action = torch.tensor(row["action"], dtype=torch.float32)
-
         if action.numel() != self.action_dim:
             raise ValueError(
                 f"Expected action_dim={self.action_dim}, got {action.numel()} at idx={idx}. "
                 "Set action_dim to match the dataset."
             )
+        return action
+
+    def __getitem__(self, idx: int) -> dict[str, Any]:
+        row = self.samples[idx]
+
+        image = Image.open(row["image_path"]).convert("RGB")
+        action = self.get_action(idx)
 
         return {
             "image": image,

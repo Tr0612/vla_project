@@ -11,23 +11,15 @@ def _parse_yaml_scalar(raw: str) -> Any:
     if text == "":
         return ""
 
-    # Try JSON-compatible scalars first (numbers, booleans, null, quoted strings).
     try:
         return json.loads(text)
     except Exception:
         pass
 
-    # Fallback to plain string.
     return text
 
 
 def _load_simple_yaml(path: str | Path) -> dict[str, Any]:
-    """Minimal YAML loader for flat key-value config files.
-
-    Supports lines like:
-      key: value
-    Ignores empty lines and # comments.
-    """
     p = Path(path)
     if not p.exists():
         return {}
@@ -44,7 +36,6 @@ def _load_simple_yaml(path: str | Path) -> dict[str, Any]:
         key = key.strip()
         value = value.strip()
 
-        # Strip inline comments for unquoted values.
         if "#" in value and not (value.startswith('"') or value.startswith("'")):
             value = value.split("#", 1)[0].strip()
 
@@ -69,9 +60,19 @@ class TrainConfig:
     freeze_vision: bool = True
     freeze_text: bool = True
 
+    # Fusion/projection
+    proj_dim: int = 512
+    normalize_embeddings: bool = True
+
     # Data shape
     action_dim: int = 4
     num_workers: int = 2
+
+    # Action scaling/normalization
+    normalize_action_targets: bool = True
+    action_norm_eps: float = 1e-6
+    learnable_action_scale: bool = True
+    action_scale_init: float = 1.0
 
     # Optimization
     epochs: int = 30

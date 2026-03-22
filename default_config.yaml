@@ -10,12 +10,22 @@ image_size: 224
 freeze_vision: true
 freeze_text: true
 
+# Fusion/projection
+proj_dim: 512
+normalize_embeddings: true
+
 # Data
 action_dim: 4
 num_workers: 3
 
+# Action scaling/normalization
+normalize_action_targets: true
+action_norm_eps: 1e-6
+learnable_action_scale: true
+action_scale_init: 1.0
+
 # Optimization
-epochs: 5
+epochs: 20
 batch_size: 8
 grad_accum_steps: 4
 learning_rate: 1e-4
