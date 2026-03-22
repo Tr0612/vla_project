@@ -1,0 +1,24 @@
+vision_model_name: google/siglip2-base-patch16-224
+text_model_name: distilbert-base-uncased
+image_size: 224
+freeze_vision: true
+freeze_text: true
+
+# Data
+action_dim: 7
+num_workers: 2
+
+# Optimization
+epochs: 30
+batch_size: 8
+grad_accum_steps: 4
+learning_rate: 1e-4
+weight_decay: 1e-2
+grad_clip_norm: 1.0
+use_fp16: true
+
+# Runtime
+seed: 42
+device: cuda
+out_dir: vla_stack/checkpoints
+save_best_by_val: true
