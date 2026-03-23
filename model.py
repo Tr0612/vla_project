@@ -15,9 +15,16 @@ class VLAFusionPolicy(nn.Module):
         super().__init__()
         self.cfg = cfg
 
-        vision_backbone = AutoModel.from_pretrained(cfg.vision_model_name)
-        self.vision = vision_backbone.vision_model if hasattr(vision_backbone, "vision_model") else vision_backbone
-        self.text = AutoModel.from_pretrained(cfg.text_model_name)
+        # Use a single SigLIP2 checkpoint for both vision and text encoders.
+        siglip_backbone = AutoModel.from_pretrained(cfg.vision_model_name)
+        if not hasattr(siglip_backbone, "vision_model") or not hasattr(siglip_backbone, "text_model"):
+            raise ValueError(
+                "Expected a SigLIP-style model with both vision_model and text_model. "
+                f"Got: {cfg.vision_model_name}"
+            )
+
+        self.vision = siglip_backbone.vision_model
+        self.text = siglip_backbone.text_model
 
         if cfg.freeze_vision:
             for p in self.vision.parameters():
