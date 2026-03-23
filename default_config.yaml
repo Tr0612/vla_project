@@ -25,7 +25,7 @@ learnable_action_scale: true
 action_scale_init: 1.0
 
 # Optimization
-epochs: 20
+epochs: 30
 batch_size: 8
 grad_accum_steps: 4
 learning_rate: 1e-4

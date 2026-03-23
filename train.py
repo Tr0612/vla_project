@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 from transformers import AutoImageProcessor, AutoTokenizer
 
 from config import TrainConfig
-from dataset import VLAJsonlDataset, ShortMetaWorldDataset
+from dataset import ShortMetaWorldDataset, VLAJsonlDataset
 from model import VLAFusionPolicy
 
 
@@ -27,6 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--num-workers", type=int, default=None)
     parser.add_argument("--out-dir", type=str, default=None)
+    parser.add_argument("--resume", type=str, default=None)
     return parser.parse_args()
 
 
@@ -100,16 +101,14 @@ def evaluate(
     total_count = 0
 
     with torch.no_grad():
-        for step,batch in enumerate(loader,start=1):
+        for step, batch in enumerate(loader):
             pixel_values = batch["pixel_values"].to(device)
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
             target_actions = batch["actions"].to(device)
 
             target_for_loss = (
-                normalize_actions(target_actions, action_mean, action_std)
-                if normalize_targets
-                else target_actions
+                normalize_actions(target_actions, action_mean, action_std) if normalize_targets else target_actions
             )
 
             with torch.autocast(
@@ -155,6 +154,8 @@ def main() -> None:
     if args.out_dir is not None:
         cfg.out_dir = args.out_dir
 
+    resume_path = Path(args.resume) if args.resume else None
+
     print("Training started", flush=True)
     print(f"Loaded config from: {cfg_path if cfg_path.exists() else 'TrainConfig defaults'}", flush=True)
 
@@ -191,9 +192,6 @@ def main() -> None:
     print(f"Action mean: {action_mean.tolist()}", flush=True)
     print(f"Action std: {action_std.tolist()}", flush=True)
 
-    action_mean = action_mean.to(device)
-    action_std = action_std.to(device)
-
     print("Loading processor/tokenizer...", flush=True)
     processor = AutoImageProcessor.from_pretrained(cfg.vision_model_name)
     tokenizer = AutoTokenizer.from_pretrained(cfg.text_model_name)
@@ -225,15 +223,48 @@ def main() -> None:
     loss_fn = nn.MSELoss()
     scaler = torch.amp.GradScaler(device="cuda", enabled=(cfg.use_fp16 and device.type == "cuda"))
 
+    start_epoch = 0
+    best_val = float("inf")
+
+    if resume_path is not None:
+        if not resume_path.exists():
+            raise FileNotFoundError(f"Resume checkpoint not found: {resume_path}")
+
+        print(f"Resuming from checkpoint: {resume_path}", flush=True)
+        resume_ckpt = torch.load(resume_path, map_location=device)
+        model.load_state_dict(resume_ckpt["model"])
+
+        if isinstance(resume_ckpt, dict) and "optimizer" in resume_ckpt:
+            optimizer.load_state_dict(resume_ckpt["optimizer"])
+
+        start_epoch = int(resume_ckpt.get("epoch", 0))
+        best_val = float(resume_ckpt.get("val_loss", best_val))
+
+        resume_action_stats = resume_ckpt.get("action_stats", {}) if isinstance(resume_ckpt, dict) else {}
+        resume_mean = resume_action_stats.get("mean")
+        resume_std = resume_action_stats.get("std")
+        if resume_mean is not None and resume_std is not None:
+            if len(resume_mean) != cfg.action_dim or len(resume_std) != cfg.action_dim:
+                raise ValueError(
+                    "Checkpoint action_stats shape does not match config action_dim. "
+                    f"Expected {cfg.action_dim}, got mean={len(resume_mean)}, std={len(resume_std)}"
+                )
+            action_mean = torch.tensor(resume_mean, dtype=torch.float32)
+            action_std = torch.tensor(resume_std, dtype=torch.float32)
+            print("Loaded action stats from checkpoint", flush=True)
+
+        print(f"Resume start epoch: {start_epoch}", flush=True)
+
+    action_mean = action_mean.to(device)
+    action_std = action_std.to(device)
+
     out_dir = Path(cfg.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     cfg.save_json(out_dir / "train_config.json")
     np.save(out_dir / "action_mean.npy", action_mean.detach().cpu().numpy())
     np.save(out_dir / "action_std.npy", action_std.detach().cpu().numpy())
 
-    best_val = float("inf")
-
-    for epoch in range(cfg.epochs):
+    for epoch in range(start_epoch, cfg.epochs):
         model.train()
         optimizer.zero_grad(set_to_none=True)
 

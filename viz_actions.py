@@ -133,8 +133,6 @@ def main() -> None:
             if normalized_targets:
                 pred_actions = pred_actions * action_std + action_mean
 
-            pred_actions = pred_actions.clamp(-1.0, 1.0)
-
             preds.append(pred_actions)
             gts.append(target_actions.detach().cpu())
 

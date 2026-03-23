@@ -5,6 +5,7 @@ plots/
 videos/
 media/
 outputs/
+uv.lock
 
 # Model/media binaries
 *.pt
@@ -18,6 +19,7 @@ outputs/
 *.avi
 *.mkv
 *.gif
+*.jpg
 
 # Python cache and env
 __pycache__/

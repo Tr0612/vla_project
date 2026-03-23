@@ -15,11 +15,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ckpt", type=str, required=True)
     parser.add_argument("--image", type=str, required=True)
     parser.add_argument("--instruction", type=str, required=True)
-
-    parser.add_argument("--clip-action", dest="clip_action", action="store_true")
-    parser.add_argument("--no-clip-action", dest="clip_action", action="store_false")
-    parser.set_defaults(clip_action=True)
-
     return parser.parse_args()
 
 
@@ -66,10 +61,6 @@ def main() -> None:
     # If targets were normalized during training, map back to action space.
     if normalized_targets:
         pred_action = pred_action * action_std + action_mean
-
-    if args.clip_action:
-        pred_action = pred_action.clamp(-1.0, 1.0)
-
     print("pred_action:", pred_action.tolist())
 
 

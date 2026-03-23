@@ -18,16 +18,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=str, default="default_config.yaml")
     parser.add_argument("--task", type=str, default="button-press-topdown-v3")
     parser.add_argument("--episodes", type=int, default=20)
-    parser.add_argument("--max-steps", type=int, default=200)
+    parser.add_argument("--max-steps", type=int, default=1000)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--camera", type=str, default="corner2")
+    parser.add_argument("--camera-sweep", action="store_true")
+    parser.add_argument("--camera-candidates", type=str, default="corner2,corner,corner3,topview")
     parser.add_argument("--width", type=int, default=224)
     parser.add_argument("--height", type=int, default=224)
-    parser.add_argument("--clip-action", dest="clip_action", action="store_true")
-    parser.add_argument("--no-clip-action", dest="clip_action", action="store_false")
-    parser.set_defaults(clip_action=True)
     parser.add_argument("--record-video", type=str, default="")
     parser.add_argument("--fps", type=int, default=20)
+
+    # Two-phase geometry controller.
+    parser.add_argument("--press-distance-thresh", type=float, default=0.04)
+    parser.add_argument("--fallback-press-step", type=int, default=30)
+    parser.add_argument("--approach-z-min", type=float, default=0.1)
+    parser.add_argument("--press-z-max", type=float, default=-0.5)
+    parser.add_argument("--xy-damping", type=float, default=0.8)
     return parser.parse_args()
 
 
@@ -137,19 +143,152 @@ def reset_env(env, seed: int):
 def _init_video_writer(path: str, fps: int):
     if not path:
         return None
+
     try:
         import imageio.v2 as imageio
 
         Path(path).parent.mkdir(parents=True, exist_ok=True)
 
-        # Force a concrete codec to avoid pyav passing None codec.
         try:
             return imageio.get_writer(path, fps=fps, format="FFMPEG", codec="libx264")
         except Exception:
-            return imageio.get_writer(path, fps=fps, format="FFMPEG", codec="mpeg4")
+            pass
+
+        try:
+            return imageio.get_writer(path, fps=fps, plugin="pyav", codec="libx264")
+        except Exception:
+            return imageio.get_writer(path, fps=fps, plugin="pyav", codec="mpeg4")
     except Exception as e:
         print(f"video disabled: {e}")
         return None
+
+
+def _extract_hand_and_obj_xy(obs) -> tuple[np.ndarray, np.ndarray] | tuple[None, None]:
+    if obs is None:
+        return None, None
+    arr = np.asarray(obs, dtype=np.float32).reshape(-1)
+    if arr.size >= 7:
+        hand_xy = arr[0:2]
+        obj_xy = arr[4:6]
+        return hand_xy, obj_xy
+    return None, None
+
+
+def _is_close_to_button(obs, dist_thresh: float) -> tuple[bool, float | None]:
+    hand_xy, obj_xy = _extract_hand_and_obj_xy(obs)
+    if hand_xy is None or obj_xy is None:
+        return False, None
+    dist = float(np.linalg.norm(hand_xy - obj_xy))
+    return dist <= dist_thresh, dist
+
+
+def _parse_camera_candidates(raw: str) -> list[str]:
+    cams = [c.strip() for c in raw.split(",") if c.strip()]
+    return cams if cams else ["corner2", "corner", "corner3", "topview"]
+
+
+def _camera_video_path(base_path: str, camera: str) -> str:
+    if not base_path:
+        return ""
+    p = Path(base_path)
+    return str(p.with_name(f"{p.stem}_{camera}{p.suffix}"))
+
+
+def run_rollouts_for_camera(
+    args: argparse.Namespace,
+    model,
+    processor,
+    tokenizer,
+    normalized_targets: bool,
+    action_mean: np.ndarray,
+    action_std: np.ndarray,
+    camera_name: str,
+) -> tuple[float, str]:
+    env, resolved_task, task_obj = make_metaworld_env(args.task, args.seed)
+    instruction = make_instruction(resolved_task)
+    print(f"Requested task: {args.task} | Using task: {resolved_task} | camera: {camera_name}")
+
+    video_path = _camera_video_path(args.record_video, camera_name)
+    video_writer = _init_video_writer(video_path, args.fps)
+
+    successes = 0
+
+    for ep in range(args.episodes):
+        if task_obj is not None:
+            env.set_task(task_obj)
+
+        obs, _ = reset_env(env, args.seed + ep)
+        ep_success = False
+
+        for step_idx in range(args.max_steps):
+            frame = render_rgb(env, args.width, args.height, camera_name)
+            if frame.dtype != np.uint8:
+                frame = np.clip(frame, 0, 255).astype(np.uint8)
+
+            pil_image = Image.fromarray(frame).convert("RGB").resize((224, 224))
+
+            image_inputs = processor(images=[pil_image], return_tensors="pt")
+            text_inputs = tokenizer(
+                [instruction],
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=64,
+            )
+
+            with torch.no_grad():
+                pred = model(
+                    pixel_values=image_inputs["pixel_values"].to(next(model.parameters()).device),
+                    input_ids=text_inputs["input_ids"].to(next(model.parameters()).device),
+                    attention_mask=text_inputs["attention_mask"].to(next(model.parameters()).device),
+                )
+
+            action = pred[0].detach().cpu().numpy()
+            if normalized_targets:
+                action = action * action_std + action_mean
+
+            close_to_button, dist_xy = _is_close_to_button(obs, args.press_distance_thresh)
+            if dist_xy is None:
+                close_to_button = step_idx >= args.fallback_press_step
+
+            action[0] *= args.xy_damping
+            action[1] *= args.xy_damping
+
+            if close_to_button:
+                action[2] = min(action[2], args.press_z_max)
+            else:
+                action[2] = max(action[2], args.approach_z_min)
+
+            step_out = env.step(action)
+            if len(step_out) == 5:
+                obs, _, terminated, truncated, info = step_out
+                done = bool(terminated or truncated)
+            else:
+                obs, _, done, info = step_out
+
+            if info.get("success", 0.0) > 0.0:
+                ep_success = True
+
+            if video_writer is not None:
+                video_writer.append_data(frame)
+
+            if done:
+                break
+
+        successes += int(ep_success)
+        print(f"camera={camera_name} episode {ep + 1}/{args.episodes} success={int(ep_success)}")
+
+    if video_writer is not None:
+        video_writer.close()
+
+    try:
+        env.close()
+    except Exception:
+        pass
+
+    success_rate = successes / max(args.episodes, 1)
+    print(f"task={resolved_task} camera={camera_name} episodes={args.episodes} success_rate={success_rate:.4f}")
+    return success_rate, resolved_task
 
 
 def main() -> None:
@@ -171,74 +310,35 @@ def main() -> None:
     processor = AutoImageProcessor.from_pretrained(cfg.vision_model_name)
     tokenizer = AutoTokenizer.from_pretrained(cfg.text_model_name)
 
-    env, resolved_task, task_obj = make_metaworld_env(args.task, args.seed)
-    instruction = make_instruction(resolved_task)
-    print(f"Requested task: {args.task} | Using task: {resolved_task}")
+    cameras = _parse_camera_candidates(args.camera_candidates) if args.camera_sweep else [args.camera]
 
-    video_writer = _init_video_writer(args.record_video, args.fps)
-
-    successes = 0
-
-    for ep in range(args.episodes):
-        if task_obj is not None:
-            env.set_task(task_obj)
-
-        _, _ = reset_env(env, args.seed + ep)
-        ep_success = False
-
-        for _ in range(args.max_steps):
-            frame = render_rgb(env, args.width, args.height, args.camera)
-            if frame.dtype != np.uint8:
-                frame = np.clip(frame, 0, 255).astype(np.uint8)
-
-            pil_image = Image.fromarray(frame).convert("RGB").resize((cfg.image_size, cfg.image_size))
-
-            image_inputs = processor(images=[pil_image], return_tensors="pt")
-            text_inputs = tokenizer(
-                [instruction],
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=64,
+    results: list[tuple[str, float, str]] = []
+    for cam in cameras:
+        try:
+            sr, resolved_task = run_rollouts_for_camera(
+                args,
+                model,
+                processor,
+                tokenizer,
+                normalized_targets,
+                action_mean,
+                action_std,
+                cam,
             )
+            results.append((cam, sr, resolved_task))
+        except Exception as e:
+            print(f"camera={cam} failed: {e}")
 
-            with torch.no_grad():
-                pred = model(
-                    pixel_values=image_inputs["pixel_values"].to(device),
-                    input_ids=text_inputs["input_ids"].to(device),
-                    attention_mask=text_inputs["attention_mask"].to(device),
-                )
+    if not results:
+        raise RuntimeError("All camera evaluations failed.")
 
-            action = pred[0].detach().cpu().numpy()
-            if normalized_targets:
-                action = action * action_std + action_mean
-            if args.clip_action:
-                action = np.clip(action, -1.0, 1.0)
+    results.sort(key=lambda x: x[1], reverse=True)
+    print("camera sweep summary:")
+    for cam, sr, resolved_task in results:
+        print(f"task={resolved_task} camera={cam} success_rate={sr:.4f}")
 
-            step_out = env.step(action)
-            if len(step_out) == 5:
-                _, _, terminated, truncated, info = step_out
-                done = bool(terminated or truncated)
-            else:
-                _, _, done, info = step_out
-
-            if info.get("success", 0.0) > 0.0:
-                ep_success = True
-
-            if video_writer is not None:
-                video_writer.append_data(frame)
-
-            if done:
-                break
-
-        successes += int(ep_success)
-        print(f"episode {ep + 1}/{args.episodes} success={int(ep_success)}")
-
-    if video_writer is not None:
-        video_writer.close()
-
-    success_rate = successes / max(args.episodes, 1)
-    print(f"task={resolved_task} episodes={args.episodes} success_rate={success_rate:.4f}")
+    best_cam, best_sr, resolved_task = results[0]
+    print(f"best_camera={best_cam} task={resolved_task} success_rate={best_sr:.4f}")
 
 
 if __name__ == "__main__":
