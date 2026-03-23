@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 
-# Run from project root, or set PROJECT_DIR explicitly.
-PROJECT_DIR="/media/thanush/ubuntu_project/vla/vla_stack"
+# By default, use ./vla_stack from the current directory.
+# You can still override by exporting PROJECT_DIR before sourcing this file.
+PROJECT_DIR="${PROJECT_DIR:-$PWD}"
 
 export UV_CACHE_DIR="$PROJECT_DIR/.cache/uv"
 mkdir -p "$UV_CACHE_DIR"
