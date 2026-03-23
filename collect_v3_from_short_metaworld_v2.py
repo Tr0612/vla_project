@@ -21,6 +21,8 @@ TASK_TO_POLICY = {
     "reach-v3": "SawyerReachV3Policy",
     "sweep-v3": "SawyerSweepV3Policy",
     "window-open-v3": "SawyerWindowOpenV3Policy",
+    "stick-pull-v3" : "SawyerStickPullV3Policy",
+    "handle-pull-v3" : "SawyerHandlePullV3Policy"
 }
 
 
@@ -236,7 +238,7 @@ def collect_task(
     return all_actions, all_states, successes, attempts
 
 
-def convert_prompts(source_root: Path, out_root: Path, selected_v2: list[str]) -> None:
+def convert_prompts(source_root: Path, out_root: Path, selected_tasks: list[tuple[str, str]]) -> None:
     src_prompt = source_root / "mt50_task_prompts.json"
     if not src_prompt.exists():
         return
@@ -245,10 +247,11 @@ def convert_prompts(source_root: Path, out_root: Path, selected_v2: list[str]) -
         src = json.load(f)
 
     dst: dict[str, dict] = {}
-    for v2 in selected_v2:
-        v3 = to_v3_task(v2)
+    for v2, v3 in selected_tasks:
         if v2 in src and isinstance(src[v2], dict):
             dst[v3] = src[v2]
+        elif v3 in src and isinstance(src[v3], dict):
+            dst[v3] = src[v3]
 
     if not dst:
         return
@@ -264,20 +267,30 @@ def main() -> None:
     source_root = Path(args.source_root)
     out_root = Path(args.out_root)
 
-    source_v2 = list_source_v2_tasks(source_root)
-    if not source_v2:
-        raise RuntimeError(f"No *-v2 tasks found under {source_root}")
-
     if args.tasks.strip():
-        requested_v2 = [x.strip() for x in args.tasks.split(",") if x.strip()]
-        selected_v2 = [t for t in requested_v2 if t in source_v2]
-        missing = [t for t in requested_v2 if t not in source_v2]
-        if missing:
-            print(f"warning: these tasks were not found in source and will be skipped: {missing}")
-    else:
-        selected_v2 = source_v2
+        selected_tasks: list[tuple[str, str]] = []
+        invalid: list[str] = []
+        for raw_task in [x.strip() for x in args.tasks.split(",") if x.strip()]:
+            if raw_task.endswith("-v2"):
+                v2_task = raw_task
+                v3_task = to_v3_task(raw_task)
+            elif raw_task.endswith("-v3"):
+                v3_task = raw_task
+                v2_task = raw_task[:-3] + "-v2"
+            else:
+                invalid.append(raw_task)
+                continue
+            selected_tasks.append((v2_task, v3_task))
 
-    if not selected_v2:
+        if invalid:
+            print(f"warning: these tasks are not valid -v2/-v3 task names and will be skipped: {invalid}")
+    else:
+        source_v2 = list_source_v2_tasks(source_root)
+        if not source_v2:
+            raise RuntimeError(f"No *-v2 tasks found under {source_root}")
+        selected_tasks = [(v2_task, to_v3_task(v2_task)) for v2_task in source_v2]
+
+    if not selected_tasks:
         raise RuntimeError("No valid tasks selected.")
 
     out_img_root = out_root / "short-MetaWorld" / "img_only"
@@ -285,14 +298,13 @@ def main() -> None:
     out_img_root.mkdir(parents=True, exist_ok=True)
     out_pkl_root.mkdir(parents=True, exist_ok=True)
 
-    convert_prompts(source_root, out_root, selected_v2)
+    convert_prompts(source_root, out_root, selected_tasks)
 
     summary = []
 
-    for v2_task in selected_v2:
-        v3_task = to_v3_task(v2_task)
+    for v2_task, v3_task in selected_tasks:
         if v3_task not in TASK_TO_POLICY:
-            print(f"skip {v2_task} -> {v3_task}: no policy mapping")
+            print(f"skip {v2_task} / {v3_task}: no policy mapping")
             continue
 
         print(f"\n=== collecting {v2_task} -> {v3_task} ===")

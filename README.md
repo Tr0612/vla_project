@@ -70,6 +70,26 @@ python eval_rollout.py --ckpt checkpoints/best.pt --task button-press-topdown-v2
 - action_dim default is 4 (MetaWorld-friendly).
 - Keep SigLIP2 frozen for 8GB VRAM stability.
 
+## RTX 50-series (sm_120) PyTorch fix
+
+If you see:
+
+`NVIDIA GeForce RTX 5080 with CUDA capability sm_120 is not compatible with the current PyTorch installation`
+
+your PyTorch build is too old (for example `2.6.0+cu124`).
+
+Install a CUDA 12.8+ PyTorch build:
+
+```bash
+pip install --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+```
+
+Quick check:
+
+```bash
+python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.get_device_capability(0) if torch.cuda.is_available() else 'cuda-not-available')"
+```
+
 ## Phase-2 fine-tuning (optional)
 
 If phase-1 is stable and you want more performance:

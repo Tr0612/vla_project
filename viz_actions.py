@@ -17,6 +17,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Visualize action prediction quality.")
     parser.add_argument("--ckpt", type=str, required=True)
     parser.add_argument("--config", type=str, default="default_config.yaml")
+    parser.add_argument("--task", type=str, default=None, help="Optional task filter for short_metaworld (e.g. door-open-v3)")
     parser.add_argument("--dataset-type", type=str, choices=["short_metaworld", "jsonl"], default=None)
     parser.add_argument("--data-root", type=str, default=None)
     parser.add_argument("--val-jsonl", type=str, default=None)
@@ -102,6 +103,13 @@ def main() -> None:
             seed=cfg.seed,
             action_dim=cfg.action_dim,
         )
+        if args.task:
+            val_ds.samples = [s for s in val_ds.samples if s.get("task_name") == args.task]
+            if len(val_ds.samples) == 0:
+                raise RuntimeError(
+                    f"No validation samples found for task='{args.task}' under data_root='{cfg.data_root}'."
+                )
+            print(f"task filter: {args.task} | samples: {len(val_ds.samples)}")
     else:
         if not cfg.val_jsonl:
             raise ValueError("For jsonl mode, provide --val-jsonl")

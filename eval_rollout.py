@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import json
 
 import numpy as np
 import torch
@@ -45,7 +46,46 @@ def load_cfg(args: argparse.Namespace, ckpt: dict) -> TrainConfig:
     return cfg
 
 
-def make_instruction(task: str) -> str:
+def _load_task_prompts(data_root: str) -> dict:
+    candidates = [
+        Path(data_root) / "mt50_task_prompts.json",
+        Path("data/short-metaworld-vla/mt50_task_prompts.json"),
+        Path("data/short-metaworld-v3/mt50_task_prompts.json"),
+    ]
+    for p in candidates:
+        if p.exists():
+            try:
+                with p.open("r", encoding="utf-8") as f:
+                    prompts = json.load(f)
+                print(f"Loaded task prompts: {p}")
+                return prompts
+            except Exception as e:
+                print(f"Failed loading prompts from {p}: {e}")
+    print("Task prompts not found; using fallback instruction template.")
+    return {}
+
+
+def make_instruction(task: str, task_prompts: dict | None = None) -> str:
+    prompts = task_prompts or {}
+    info = prompts.get(task)
+    if isinstance(info, dict):
+        text = info.get("simple")
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+
+    # Try counterpart naming if task prompt exists only in v2/v3 variant.
+    if task.endswith("-v2"):
+        info = prompts.get(task[:-3] + "-v3")
+    elif task.endswith("-v3"):
+        info = prompts.get(task[:-3] + "-v2")
+    else:
+        info = None
+
+    if isinstance(info, dict):
+        text = info.get("simple")
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+
     return f"Perform the task: {task.replace('-', ' ')}"
 
 
@@ -155,11 +195,26 @@ def _init_video_writer(path: str, fps: int):
             pass
 
         try:
-            return imageio.get_writer(path, fps=fps, plugin="pyav", codec="libx264")
+            return imageio.get_writer(path, fps=fps, codec="libx264")
         except Exception:
-            return imageio.get_writer(path, fps=fps, plugin="pyav", codec="mpeg4")
+            return imageio.get_writer(path, fps=fps, codec="mpeg4")
     except Exception as e:
         print(f"video disabled: {e}")
+        return None
+
+
+def _append_video_frame(video_writer, frame):
+    if video_writer is None:
+        return None
+    try:
+        video_writer.append_data(frame)
+        return video_writer
+    except Exception as e:
+        print(f"video disabled during write: {e}")
+        try:
+            video_writer.close()
+        except Exception:
+            pass
         return None
 
 
@@ -203,10 +258,12 @@ def run_rollouts_for_camera(
     action_mean: np.ndarray,
     action_std: np.ndarray,
     camera_name: str,
+    task_prompts: dict,
 ) -> tuple[float, str]:
     env, resolved_task, task_obj = make_metaworld_env(args.task, args.seed)
-    instruction = make_instruction(resolved_task)
+    instruction = make_instruction(resolved_task, task_prompts)
     print(f"Requested task: {args.task} | Using task: {resolved_task} | camera: {camera_name}")
+    print(f"instruction: {instruction}")
 
     video_path = _camera_video_path(args.record_video, camera_name)
     video_writer = _init_video_writer(video_path, args.fps)
@@ -219,6 +276,9 @@ def run_rollouts_for_camera(
 
         obs, _ = reset_env(env, args.seed + ep)
         ep_success = False
+        ep_max_success = 0.0
+        ep_max_reward = float("-inf")
+        ep_min_obj_to_target = float("inf")
 
         for step_idx in range(args.max_steps):
             frame = render_rgb(env, args.width, args.height, camera_name)
@@ -251,32 +311,49 @@ def run_rollouts_for_camera(
             if dist_xy is None:
                 close_to_button = step_idx >= args.fallback_press_step
 
-            action[0] *= args.xy_damping
-            action[1] *= args.xy_damping
+            # action[0] *= args.xy_damping
+            # action[1] *= args.xy_damping
 
-            if close_to_button:
-                action[2] = min(action[2], args.press_z_max)
-            else:
-                action[2] = max(action[2], args.approach_z_min)
+            # if close_to_button:
+            #     action[2] = min(action[2], args.press_z_max)
+            # else:
+            #     action[2] = max(action[2], args.approach_z_min)
 
             step_out = env.step(action)
             if len(step_out) == 5:
-                obs, _, terminated, truncated, info = step_out
+                obs, reward, terminated, truncated, info = step_out
                 done = bool(terminated or truncated)
             else:
-                obs, _, done, info = step_out
+                obs, reward, done, info = step_out
 
-            if info.get("success", 0.0) > 0.0:
+            step_success = float(info.get("success", 0.0))
+            ep_max_success = max(ep_max_success, step_success)
+            ep_max_reward = max(ep_max_reward, float(reward))
+            if "obj_to_target" in info:
+                try:
+                    ep_min_obj_to_target = min(ep_min_obj_to_target, float(info["obj_to_target"]))
+                except Exception:
+                    pass
+
+            if step_success > 0.0:
                 ep_success = True
 
             if video_writer is not None:
-                video_writer.append_data(frame)
+                video_writer = _append_video_frame(video_writer, frame)
 
             if done:
                 break
 
         successes += int(ep_success)
-        print(f"camera={camera_name} episode {ep + 1}/{args.episodes} success={int(ep_success)}")
+        extra = (
+            f" max_success={ep_max_success:.3f} max_reward={ep_max_reward:.4f}"
+            + (
+                f" min_obj_to_target={ep_min_obj_to_target:.4f}"
+                if np.isfinite(ep_min_obj_to_target)
+                else ""
+            )
+        )
+        print(f"camera={camera_name} episode {ep + 1}/{args.episodes} success={int(ep_success)}{extra}")
 
     if video_writer is not None:
         video_writer.close()
@@ -309,6 +386,7 @@ def main() -> None:
 
     processor = AutoImageProcessor.from_pretrained(cfg.vision_model_name)
     tokenizer = AutoTokenizer.from_pretrained(cfg.text_model_name)
+    task_prompts = _load_task_prompts(cfg.data_root)
 
     cameras = _parse_camera_candidates(args.camera_candidates) if args.camera_sweep else [args.camera]
 
@@ -324,6 +402,7 @@ def main() -> None:
                 action_mean,
                 action_std,
                 cam,
+                task_prompts,
             )
             results.append((cam, sr, resolved_task))
         except Exception as e:

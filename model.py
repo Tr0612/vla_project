@@ -117,3 +117,22 @@ class VLAFusionPolicy(nn.Module):
         action_scale = torch.exp(self.action_log_scale)
         actions = base_action * action_scale
         return actions
+
+
+# class MoEActionHead(nn.Module):
+#     def __init__(self, input_dim, num_experts=4, action_dim=7):
+#         self.experts = nn.ModuleList([
+#             MLPExpert(input_dim, action_dim) for _ in range(num_experts)
+#         ])
+#         self.router = nn.Linear(input_dim, num_experts)
+        
+#     def forward(self, x):
+#         # Compute expert weights
+#         router_logits = self.router(x)
+#         router_weights = F.softmax(router_logits, dim=-1)
+        
+#         # Weighted combination of expert outputs
+#         expert_outputs = torch.stack([e(x) for e in self.experts])
+#         action = torch.sum(router_weights.unsqueeze(-1) * expert_outputs, dim=0)
+        
+#         return action, router_weights  # Return routing for analysis

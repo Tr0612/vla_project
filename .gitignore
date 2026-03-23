@@ -20,6 +20,7 @@ uv.lock
 *.mkv
 *.gif
 *.jpg
+*.png
 
 # Python cache and env
 __pycache__/
