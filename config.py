@@ -56,13 +56,33 @@ class TrainConfig:
     # Model
     vision_model_name: str = "google/siglip2-base-patch16-224"
     text_model_name: str = "distilbert-base-uncased"
+    separate_backbones: bool = True
     image_size: int = 224
     freeze_vision: bool = True
     freeze_text: bool = True
 
     # Fusion/projection
+    fusion_type: str = "concat"  # concat | cross_attn | transformer
     proj_dim: int = 512
+    fusion_hidden_dim: int = 1024
+    fusion_out_dim: int = 512
+    fusion_num_layers: int = 2
+    fusion_num_heads: int = 8
+    fusion_dropout: float = 0.1
     normalize_embeddings: bool = True
+
+    # Action head
+    action_head_type: str = "linear"  # linear | mlp | moe
+    action_mlp_hidden_dim: int = 256
+    action_mlp_layers: int = 2
+    action_mlp_dropout: float = 0.1
+    moe_num_experts: int = 4
+    moe_hidden_dim: int = 512
+    moe_load_balance_weight: float = 0.01
+    router_condition: str = "text"  # action_input | text | text_geometry
+    use_geometry_features: bool = True
+    geometry_dim: int = 6
+    temporal_context: int = 3
 
     # Data shape
     action_dim: int = 4
@@ -75,6 +95,8 @@ class TrainConfig:
     action_scale_init: float = 1.0
 
     # Optimization
+    loss_type: str = "mse"  # mse | huber
+    huber_delta: float = 1.0
     epochs: int = 30
     batch_size: int = 8
     grad_accum_steps: int = 4

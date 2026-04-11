@@ -5,12 +5,24 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from PIL import Image
 from torch.utils.data import DataLoader
 from transformers import AutoImageProcessor, AutoTokenizer
 
 from config import TrainConfig
-from dataset import ShortMetaWorldDataset, VLAJsonlDataset
+from dataset import (
+    ShortMetaWorldDataset,
+    VLAJsonlDataset,
+    sample_get_action,
+    sample_get_image,
+    sample_get_prompt,
+    sample_get_state,
+)
 from model import VLAFusionPolicy
+
+
+def resolve_text_tokenizer_name(cfg: TrainConfig) -> str:
+    return cfg.text_model_name if cfg.separate_backbones else cfg.vision_model_name
 
 
 def parse_args() -> argparse.Namespace:
@@ -30,10 +42,34 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_collate_fn(processor, tokenizer, image_size: int):
+    def image_like_to_pil(image_like) -> Image.Image:
+        if isinstance(image_like, Image.Image):
+            return image_like.convert("RGB")
+        if torch.is_tensor(image_like):
+            img = image_like.detach().cpu()
+            if img.ndim == 4:
+                img = img[-1]
+            if img.ndim != 3:
+                raise ValueError(f"Expected image tensor with shape [C,H,W] or [T,C,H,W], got {tuple(img.shape)}")
+            if img.shape[0] in {1, 3, 4}:
+                chw = img
+            elif img.shape[-1] in {1, 3, 4}:
+                chw = img.permute(2, 0, 1)
+            else:
+                raise ValueError(f"Unsupported image tensor shape: {tuple(img.shape)}")
+            if chw.shape[0] == 1:
+                chw = chw.repeat(3, 1, 1)
+            if chw.shape[0] == 4:
+                chw = chw[:3]
+            arr = (chw.clamp(0.0, 1.0) * 255.0).to(torch.uint8).permute(1, 2, 0).numpy()
+            return Image.fromarray(arr, mode="RGB")
+        raise TypeError(f"Unsupported image type in batch: {type(image_like)}")
+
     def collate(batch: list[dict]):
-        images = [x["image"].resize((image_size, image_size)) for x in batch]
-        texts = [x["instruction"] for x in batch]
-        actions = torch.stack([x["action"] for x in batch], dim=0)
+        images = [image_like_to_pil(sample_get_image(x)).resize((image_size, image_size)) for x in batch]
+        texts = [sample_get_prompt(x) for x in batch]
+        actions = torch.stack([sample_get_action(x) for x in batch], dim=0)
+        geometry = torch.stack([sample_get_state(x) for x in batch], dim=0)
 
         image_inputs = processor(images=images, return_tensors="pt")
         text_inputs = tokenizer(
@@ -43,11 +79,15 @@ def build_collate_fn(processor, tokenizer, image_size: int):
             truncation=True,
             max_length=64,
         )
+        attention_mask = text_inputs.get("attention_mask")
+        if attention_mask is None:
+            attention_mask = torch.ones_like(text_inputs["input_ids"])
 
         return {
             "pixel_values": image_inputs["pixel_values"],
             "input_ids": text_inputs["input_ids"],
-            "attention_mask": text_inputs["attention_mask"],
+            "attention_mask": attention_mask,
+            "geometry_features": geometry,
             "actions": actions,
         }
 
@@ -92,7 +132,7 @@ def main() -> None:
     model.eval()
 
     processor = AutoImageProcessor.from_pretrained(cfg.vision_model_name)
-    tokenizer = AutoTokenizer.from_pretrained(cfg.text_model_name)
+    tokenizer = AutoTokenizer.from_pretrained(resolve_text_tokenizer_name(cfg))
     collate_fn = build_collate_fn(processor, tokenizer, cfg.image_size)
 
     if cfg.dataset_type == "short_metaworld":
@@ -102,6 +142,8 @@ def main() -> None:
             val_ratio=cfg.val_ratio,
             seed=cfg.seed,
             action_dim=cfg.action_dim,
+            geometry_dim=cfg.geometry_dim,
+            temporal_context=cfg.temporal_context,
         )
         if args.task:
             val_ds.samples = [s for s in val_ds.samples if s.get("task_name") == args.task]
@@ -113,7 +155,12 @@ def main() -> None:
     else:
         if not cfg.val_jsonl:
             raise ValueError("For jsonl mode, provide --val-jsonl")
-        val_ds = VLAJsonlDataset(cfg.val_jsonl, action_dim=cfg.action_dim)
+        val_ds = VLAJsonlDataset(
+            cfg.val_jsonl,
+            action_dim=cfg.action_dim,
+            geometry_dim=cfg.geometry_dim,
+            temporal_context=cfg.temporal_context,
+        )
 
     loader = DataLoader(
         val_ds,
@@ -133,9 +180,10 @@ def main() -> None:
             pixel_values = batch["pixel_values"].to(device)
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
+            geometry_features = batch["geometry_features"].to(device)
             target_actions = batch["actions"].to(device)
 
-            pred_actions = model(pixel_values, input_ids, attention_mask)
+            pred_actions = model(pixel_values, input_ids, attention_mask, geometry_features=geometry_features)
             pred_actions = pred_actions.detach().cpu()
 
             if normalized_targets:

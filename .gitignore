@@ -6,6 +6,7 @@ videos/
 media/
 outputs/
 uv.lock
+checkpoints*/
 
 # Model/media binaries
 *.pt

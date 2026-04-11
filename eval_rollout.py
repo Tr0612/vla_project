@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import deque
 from pathlib import Path
 import json
 
@@ -10,7 +11,12 @@ from PIL import Image
 from transformers import AutoImageProcessor, AutoTokenizer
 
 from config import TrainConfig
+from dataset import compute_geometry_features_from_state, fit_geometry_dim
 from model import VLAFusionPolicy
+
+
+def resolve_text_tokenizer_name(cfg: TrainConfig) -> str:
+    return cfg.text_model_name if cfg.separate_backbones else cfg.vision_model_name
 
 
 def parse_args() -> argparse.Namespace:
@@ -18,6 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ckpt", type=str, required=True)
     parser.add_argument("--config", type=str, default="default_config.yaml")
     parser.add_argument("--task", type=str, default="button-press-topdown-v3")
+    parser.add_argument("--instruction", type=str, default="", help="Optional language override for rollout.")
     parser.add_argument("--episodes", type=int, default=20)
     parser.add_argument("--max-steps", type=int, default=1000)
     parser.add_argument("--seed", type=int, default=42)
@@ -28,6 +35,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--height", type=int, default=224)
     parser.add_argument("--record-video", type=str, default="")
     parser.add_argument("--fps", type=int, default=20)
+    parser.add_argument("--print-actions", action="store_true")
+    parser.add_argument("--print-image-var", action="store_true")
+    parser.add_argument("--debug-every", type=int, default=1)
 
     # Two-phase geometry controller.
     parser.add_argument("--press-distance-thresh", type=float, default=0.04)
@@ -249,8 +259,21 @@ def _camera_video_path(base_path: str, camera: str) -> str:
     return str(p.with_name(f"{p.stem}_{camera}{p.suffix}"))
 
 
+def _build_temporal_geometry(history: deque[torch.Tensor], cfg: TrainConfig) -> torch.Tensor:
+    k = max(1, int(cfg.temporal_context))
+    geom_dim = int(cfg.geometry_dim)
+    out = torch.zeros(k * geom_dim, dtype=torch.float32)
+    recent = list(history)[-k:]
+    start_slot = k - len(recent)
+    for i, g in enumerate(recent):
+        s = (start_slot + i) * geom_dim
+        out[s : s + geom_dim] = fit_geometry_dim(g, geom_dim)
+    return out
+
+
 def run_rollouts_for_camera(
     args: argparse.Namespace,
+    cfg: TrainConfig,
     model,
     processor,
     tokenizer,
@@ -261,7 +284,7 @@ def run_rollouts_for_camera(
     task_prompts: dict,
 ) -> tuple[float, str]:
     env, resolved_task, task_obj = make_metaworld_env(args.task, args.seed)
-    instruction = make_instruction(resolved_task, task_prompts)
+    instruction = args.instruction.strip() if args.instruction.strip() else make_instruction(resolved_task, task_prompts)
     print(f"Requested task: {args.task} | Using task: {resolved_task} | camera: {camera_name}")
     print(f"instruction: {instruction}")
 
@@ -275,6 +298,7 @@ def run_rollouts_for_camera(
             env.set_task(task_obj)
 
         obs, _ = reset_env(env, args.seed + ep)
+        geometry_history: deque[torch.Tensor] = deque(maxlen=max(1, int(cfg.temporal_context)))
         ep_success = False
         ep_max_success = 0.0
         ep_max_reward = float("-inf")
@@ -285,7 +309,7 @@ def run_rollouts_for_camera(
             if frame.dtype != np.uint8:
                 frame = np.clip(frame, 0, 255).astype(np.uint8)
 
-            pil_image = Image.fromarray(frame).convert("RGB").resize((224, 224))
+            pil_image = Image.fromarray(frame).convert("RGB").resize((cfg.image_size, cfg.image_size))
 
             image_inputs = processor(images=[pil_image], return_tensors="pt")
             text_inputs = tokenizer(
@@ -295,17 +319,46 @@ def run_rollouts_for_camera(
                 truncation=True,
                 max_length=64,
             )
+            attention_mask = text_inputs.get("attention_mask")
+            if attention_mask is None:
+                attention_mask = torch.ones_like(text_inputs["input_ids"])
 
             with torch.no_grad():
+                pixel_values = image_inputs["pixel_values"].to(next(model.parameters()).device)
+                input_ids = text_inputs["input_ids"].to(next(model.parameters()).device)
+                attention_mask_device = attention_mask.to(next(model.parameters()).device)
+                cur_geom = compute_geometry_features_from_state(obs)
+                geometry_history.append(fit_geometry_dim(cur_geom, int(cfg.geometry_dim)))
+                geometry_features = _build_temporal_geometry(geometry_history, cfg).unsqueeze(0).to(
+                    next(model.parameters()).device
+                )
+
                 pred = model(
-                    pixel_values=image_inputs["pixel_values"].to(next(model.parameters()).device),
-                    input_ids=text_inputs["input_ids"].to(next(model.parameters()).device),
-                    attention_mask=text_inputs["attention_mask"].to(next(model.parameters()).device),
+                    pixel_values=pixel_values,
+                    input_ids=input_ids,
+                    attention_mask=attention_mask_device,
+                    geometry_features=geometry_features,
                 )
 
             action = pred[0].detach().cpu().numpy()
             if normalized_targets:
                 action = action * action_std + action_mean
+
+            if args.print_actions and (step_idx % max(1, args.debug_every) == 0):
+                action_list = [round(float(x), 5) for x in action.tolist()]
+                print(f"camera={camera_name} ep={ep + 1} step={step_idx} action={action_list}")
+
+            if args.print_image_var and (step_idx % max(1, args.debug_every) == 0):
+                with torch.no_grad():
+                    vision_out = model.vision(pixel_values=pixel_values)
+                    vision_pool = model._pool_vision_output(vision_out).detach().float()
+                    vision_proj = model.vision_proj_ln(model.vision_proj(vision_pool)).detach().float()
+                    pool_var = float(vision_pool.var(dim=-1, unbiased=False).mean().item())
+                    proj_var = float(vision_proj.var(dim=-1, unbiased=False).mean().item())
+                print(
+                    f"camera={camera_name} ep={ep + 1} step={step_idx} "
+                    f"vision_var_raw={pool_var:.8f} vision_var_proj={proj_var:.8f}"
+                )
 
             close_to_button, dist_xy = _is_close_to_button(obs, args.press_distance_thresh)
             if dist_xy is None:
@@ -385,7 +438,7 @@ def main() -> None:
     model.eval()
 
     processor = AutoImageProcessor.from_pretrained(cfg.vision_model_name)
-    tokenizer = AutoTokenizer.from_pretrained(cfg.text_model_name)
+    tokenizer = AutoTokenizer.from_pretrained(resolve_text_tokenizer_name(cfg))
     task_prompts = _load_task_prompts(cfg.data_root)
 
     cameras = _parse_camera_candidates(args.camera_candidates) if args.camera_sweep else [args.camera]
@@ -395,6 +448,7 @@ def main() -> None:
         try:
             sr, resolved_task = run_rollouts_for_camera(
                 args,
+                cfg,
                 model,
                 processor,
                 tokenizer,

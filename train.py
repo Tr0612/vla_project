@@ -1,23 +1,51 @@
 from __future__ import annotations
 
 import argparse
+import csv
 from pathlib import Path
 
 import numpy as np
 import torch
+from PIL import Image
 from torch import nn
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from transformers import AutoImageProcessor, AutoTokenizer
+try:
+    from torch.utils.tensorboard import SummaryWriter
+except Exception:
+    SummaryWriter = None
 
 from config import TrainConfig
-from dataset import ShortMetaWorldDataset, VLAJsonlDataset
+from dataset import (
+    ShortMetaWorldDataset,
+    VLAJsonlDataset,
+    sample_get_action,
+    sample_get_dataset_name,
+    sample_get_image,
+    sample_get_prompt,
+    sample_get_state,
+)
 from model import VLAFusionPolicy
+
+
+def resolve_text_tokenizer_name(cfg: TrainConfig) -> str:
+    return cfg.text_model_name if cfg.separate_backbones else cfg.vision_model_name
+
+
+def build_loss_fn(cfg: TrainConfig) -> nn.Module:
+    loss_type = str(cfg.loss_type).lower().strip()
+    if loss_type == "huber":
+        return nn.HuberLoss(delta=float(cfg.huber_delta))
+    if loss_type == "mse":
+        return nn.MSELoss()
+    raise ValueError(f"Unsupported loss_type: {cfg.loss_type}. Expected one of: mse, huber")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default="default_config.yaml")
+    parser.add_argument("--task", type=str, default=None, help="Optional task filter for short_metaworld (e.g. door-open-v3)")
     parser.add_argument("--dataset-type", type=str, choices=["short_metaworld", "jsonl"], default=None)
     parser.add_argument("--data-root", type=str, default=None)
     parser.add_argument("--train-jsonl", type=str, default=None)
@@ -28,14 +56,46 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-workers", type=int, default=None)
     parser.add_argument("--out-dir", type=str, default=None)
     parser.add_argument("--resume", type=str, default=None)
+    parser.add_argument("--no-tensorboard", action="store_true", help="Disable TensorBoard logging.")
+    parser.add_argument(
+        "--tb-logdir",
+        type=str,
+        default=None,
+        help="Optional TensorBoard log directory. Defaults to <out-dir>/tensorboard.",
+    )
     return parser.parse_args()
 
 
 def build_collate_fn(processor, tokenizer, image_size: int):
+    def image_like_to_pil(image_like) -> Image.Image:
+        if isinstance(image_like, Image.Image):
+            return image_like.convert("RGB")
+        if torch.is_tensor(image_like):
+            img = image_like.detach().cpu()
+            if img.ndim == 4:
+                img = img[-1]
+            if img.ndim != 3:
+                raise ValueError(f"Expected image tensor with shape [C,H,W] or [T,C,H,W], got {tuple(img.shape)}")
+            if img.shape[0] in {1, 3, 4}:
+                chw = img
+            elif img.shape[-1] in {1, 3, 4}:
+                chw = img.permute(2, 0, 1)
+            else:
+                raise ValueError(f"Unsupported image tensor shape: {tuple(img.shape)}")
+            if chw.shape[0] == 1:
+                chw = chw.repeat(3, 1, 1)
+            if chw.shape[0] == 4:
+                chw = chw[:3]
+            arr = (chw.clamp(0.0, 1.0) * 255.0).to(torch.uint8).permute(1, 2, 0).numpy()
+            return Image.fromarray(arr, mode="RGB")
+        raise TypeError(f"Unsupported image type in batch: {type(image_like)}")
+
     def collate(batch: list[dict]):
-        images = [x["image"].resize((image_size, image_size)) for x in batch]
-        texts = [x["instruction"] for x in batch]
-        actions = torch.stack([x["action"] for x in batch], dim=0)
+        images = [image_like_to_pil(sample_get_image(x)).resize((image_size, image_size)) for x in batch]
+        texts = [sample_get_prompt(x) for x in batch]
+        actions = torch.stack([sample_get_action(x) for x in batch], dim=0)
+        geometry = torch.stack([sample_get_state(x) for x in batch], dim=0)
+        task_names = [sample_get_dataset_name(x) for x in batch]
 
         image_inputs = processor(images=images, return_tensors="pt")
         text_inputs = tokenizer(
@@ -45,11 +105,16 @@ def build_collate_fn(processor, tokenizer, image_size: int):
             truncation=True,
             max_length=64,
         )
+        attention_mask = text_inputs.get("attention_mask")
+        if attention_mask is None:
+            attention_mask = torch.ones_like(text_inputs["input_ids"])
 
         return {
             "pixel_values": image_inputs["pixel_values"],
             "input_ids": text_inputs["input_ids"],
-            "attention_mask": text_inputs["attention_mask"],
+            "attention_mask": attention_mask,
+            "geometry_features": geometry,
+            "task_names": task_names,
             "actions": actions,
         }
 
@@ -65,7 +130,7 @@ def compute_action_stats(dataset, action_dim: int, eps: float) -> tuple[torch.Te
         if hasattr(dataset, "get_action"):
             a = dataset.get_action(i).to(dtype=torch.float64)
         else:
-            a = dataset[i]["action"].to(dtype=torch.float64)
+            a = sample_get_action(dataset[i]).to(dtype=torch.float64)
 
         if a.numel() != action_dim:
             raise ValueError(f"Expected action_dim={action_dim}, got {a.numel()} at idx={i}")
@@ -105,6 +170,7 @@ def evaluate(
             pixel_values = batch["pixel_values"].to(device)
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
+            geometry_features = batch["geometry_features"].to(device)
             target_actions = batch["actions"].to(device)
 
             target_for_loss = (
@@ -116,7 +182,7 @@ def evaluate(
                 dtype=torch.float16,
                 enabled=(use_fp16 and device.type == "cuda"),
             ):
-                pred_actions = model(pixel_values, input_ids, attention_mask)
+                pred_actions = model(pixel_values, input_ids, attention_mask, geometry_features=geometry_features)
                 if step == 1:
                     print(f"pred std: {pred_actions.detach().float().std().item():.6f}", flush=True)
                     print(f"gt std: {target_for_loss.detach().float().std().item():.6f}", flush=True)
@@ -172,6 +238,8 @@ def main() -> None:
             val_ratio=cfg.val_ratio,
             seed=cfg.seed,
             action_dim=cfg.action_dim,
+            geometry_dim=cfg.geometry_dim,
+            temporal_context=cfg.temporal_context,
         )
         val_ds = ShortMetaWorldDataset(
             data_root=cfg.data_root,
@@ -179,12 +247,40 @@ def main() -> None:
             val_ratio=cfg.val_ratio,
             seed=cfg.seed,
             action_dim=cfg.action_dim,
+            geometry_dim=cfg.geometry_dim,
+            temporal_context=cfg.temporal_context,
         )
+        if args.task:
+            train_ds.samples = [s for s in train_ds.samples if s.get("task_name") == args.task]
+            val_ds.samples = [s for s in val_ds.samples if s.get("task_name") == args.task]
+            if len(train_ds.samples) == 0:
+                raise RuntimeError(
+                    f"No training samples found for task='{args.task}' under data_root='{cfg.data_root}'."
+                )
+            if len(val_ds.samples) == 0:
+                raise RuntimeError(
+                    f"No validation samples found for task='{args.task}' under data_root='{cfg.data_root}'. "
+                    "Try increasing --val-ratio or using a dataset with more trajectories for this task."
+                )
+            print(
+                f"task filter: {args.task} | train samples: {len(train_ds.samples)} | val samples: {len(val_ds.samples)}",
+                flush=True,
+            )
     else:
         if not cfg.train_jsonl or not cfg.val_jsonl:
             raise ValueError("For dataset_type=jsonl, provide --train-jsonl and --val-jsonl")
-        train_ds = VLAJsonlDataset(cfg.train_jsonl, action_dim=cfg.action_dim)
-        val_ds = VLAJsonlDataset(cfg.val_jsonl, action_dim=cfg.action_dim)
+        train_ds = VLAJsonlDataset(
+            cfg.train_jsonl,
+            action_dim=cfg.action_dim,
+            geometry_dim=cfg.geometry_dim,
+            temporal_context=cfg.temporal_context,
+        )
+        val_ds = VLAJsonlDataset(
+            cfg.val_jsonl,
+            action_dim=cfg.action_dim,
+            geometry_dim=cfg.geometry_dim,
+            temporal_context=cfg.temporal_context,
+        )
 
     print(f"Train samples: {len(train_ds)} | Val samples: {len(val_ds)}", flush=True)
 
@@ -194,7 +290,7 @@ def main() -> None:
 
     print("Loading processor/tokenizer...", flush=True)
     processor = AutoImageProcessor.from_pretrained(cfg.vision_model_name)
-    tokenizer = AutoTokenizer.from_pretrained(cfg.text_model_name)
+    tokenizer = AutoTokenizer.from_pretrained(resolve_text_tokenizer_name(cfg))
 
     collate_fn = build_collate_fn(processor, tokenizer, cfg.image_size)
 
@@ -220,7 +316,11 @@ def main() -> None:
     trainable_params = [p for p in model.parameters() if p.requires_grad]
 
     optimizer = AdamW(trainable_params, lr=cfg.learning_rate, weight_decay=cfg.weight_decay)
-    loss_fn = nn.MSELoss()
+    loss_fn = build_loss_fn(cfg)
+    if str(cfg.loss_type).lower().strip() == "huber":
+        print(f"Loss: Huber (delta={cfg.huber_delta})", flush=True)
+    else:
+        print("Loss: MSE", flush=True)
     scaler = torch.amp.GradScaler(device="cuda", enabled=(cfg.use_fp16 and device.type == "cuda"))
 
     start_epoch = 0
@@ -264,17 +364,47 @@ def main() -> None:
     np.save(out_dir / "action_mean.npy", action_mean.detach().cpu().numpy())
     np.save(out_dir / "action_std.npy", action_std.detach().cpu().numpy())
 
+    writer = None
+    if not args.no_tensorboard:
+        if SummaryWriter is None:
+            print(
+                "TensorBoard logging disabled: torch.utils.tensorboard is unavailable. "
+                "Install with: pip install tensorboard",
+                flush=True,
+            )
+        else:
+            tb_dir = Path(args.tb_logdir) if args.tb_logdir else (out_dir / "tensorboard")
+            tb_dir.mkdir(parents=True, exist_ok=True)
+            writer = SummaryWriter(log_dir=str(tb_dir))
+            print(f"TensorBoard logging to: {tb_dir}", flush=True)
+
+    global_step = start_epoch * max(len(train_loader), 1)
+    use_moe_head = str(cfg.action_head_type).lower().strip() == "moe"
+    router_csv_path = out_dir / "moe_router_weights.csv"
+    router_entropy_csv_path = out_dir / "moe_router_entropy.csv"
+    if use_moe_head and start_epoch == 0:
+        with router_csv_path.open("w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["epoch", "task_name", "expert_idx", "mean_router_weight", "sample_count"])
+        with router_entropy_csv_path.open("w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["epoch", "task_name", "mean_router_entropy", "sample_count"])
     for epoch in range(start_epoch, cfg.epochs):
         model.train()
         optimizer.zero_grad(set_to_none=True)
 
         running_loss = 0.0
         steps = 0
+        router_sum_by_task: dict[str, torch.Tensor] = {}
+        router_count_by_task: dict[str, int] = {}
+        router_entropy_sum_by_task: dict[str, float] = {}
 
         for step, batch in enumerate(train_loader, start=1):
             pixel_values = batch["pixel_values"].to(device)
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
+            geometry_features = batch["geometry_features"].to(device)
+            task_names = batch.get("task_names", [])
             target_actions = batch["actions"].to(device)
 
             target_for_loss = (
@@ -288,9 +418,30 @@ def main() -> None:
                 dtype=torch.float16,
                 enabled=(cfg.use_fp16 and device.type == "cuda"),
             ):
-                pred_actions = model(pixel_values, input_ids, attention_mask)
-                loss = loss_fn(pred_actions, target_for_loss)
+                pred_actions = model(pixel_values, input_ids, attention_mask, geometry_features=geometry_features)
+                main_loss = loss_fn(pred_actions, target_for_loss)
+                aux_loss = None
+                if use_moe_head and float(cfg.moe_load_balance_weight) > 0.0:
+                    aux_raw = getattr(model, "last_moe_load_balance_loss", None)
+                    if aux_raw is not None:
+                        aux_loss = float(cfg.moe_load_balance_weight) * aux_raw
+                loss = main_loss if aux_loss is None else (main_loss + aux_loss)
                 loss = loss / cfg.grad_accum_steps
+
+            if use_moe_head and hasattr(model.action_head, "last_router_weights"):
+                router_weights = getattr(model.action_head, "last_router_weights", None)
+                if router_weights is not None and len(task_names) == router_weights.size(0):
+                    rw = router_weights.detach().cpu()
+                    ent = -(rw * torch.log(rw + 1e-8)).sum(dim=-1)
+                    for i, task_name in enumerate(task_names):
+                        t = str(task_name)
+                        if t not in router_sum_by_task:
+                            router_sum_by_task[t] = torch.zeros(rw.size(1), dtype=torch.float32)
+                            router_count_by_task[t] = 0
+                            router_entropy_sum_by_task[t] = 0.0
+                        router_sum_by_task[t] += rw[i]
+                        router_count_by_task[t] += 1
+                        router_entropy_sum_by_task[t] += float(ent[i].item())
 
             scaler.scale(loss).backward()
 
@@ -303,6 +454,12 @@ def main() -> None:
 
             running_loss += loss.item() * cfg.grad_accum_steps
             steps += 1
+            if writer is not None:
+                writer.add_scalar("train/step_loss", loss.item() * cfg.grad_accum_steps, global_step)
+                writer.add_scalar("train/step_main_loss", main_loss.item(), global_step)
+                if aux_loss is not None:
+                    writer.add_scalar("train/step_moe_load_balance_loss", aux_loss.item(), global_step)
+            global_step += 1
 
         train_loss = running_loss / max(steps, 1)
         val_loss = evaluate(
@@ -317,6 +474,33 @@ def main() -> None:
         )
 
         print(f"epoch={epoch + 1}/{cfg.epochs} train_loss={train_loss:.6f} val_loss={val_loss:.6f}")
+        if writer is not None:
+            writer.add_scalar("train/epoch_loss", train_loss, epoch + 1)
+            writer.add_scalar("val/loss", val_loss, epoch + 1)
+            writer.add_scalar("train/lr", optimizer.param_groups[0]["lr"], epoch + 1)
+            if use_moe_head:
+                for task_name, weight_sum in router_sum_by_task.items():
+                    count = max(1, router_count_by_task.get(task_name, 0))
+                    mean_weights = weight_sum / count
+                    safe_task = task_name.replace("/", "_")
+                    for expert_idx, val in enumerate(mean_weights.tolist()):
+                        writer.add_scalar(f"moe/router/{safe_task}/expert_{expert_idx}", float(val), epoch + 1)
+                    mean_entropy = float(router_entropy_sum_by_task.get(task_name, 0.0)) / count
+                    writer.add_scalar(f"moe/router_entropy/{safe_task}", mean_entropy, epoch + 1)
+        if use_moe_head and router_sum_by_task:
+            with router_csv_path.open("a", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                for task_name, weight_sum in router_sum_by_task.items():
+                    count = max(1, router_count_by_task.get(task_name, 0))
+                    mean_weights = weight_sum / count
+                    for expert_idx, val in enumerate(mean_weights.tolist()):
+                        w.writerow([epoch + 1, task_name, expert_idx, float(val), count])
+            with router_entropy_csv_path.open("a", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                for task_name in router_sum_by_task.keys():
+                    count = max(1, router_count_by_task.get(task_name, 0))
+                    mean_entropy = float(router_entropy_sum_by_task.get(task_name, 0.0)) / count
+                    w.writerow([epoch + 1, task_name, mean_entropy, count])
 
         ckpt_payload = {
             "epoch": epoch + 1,
@@ -340,6 +524,12 @@ def main() -> None:
             best_path = out_dir / "best.pt"
             torch.save(ckpt_payload, best_path)
             print(f"saved best checkpoint: {best_path} (val_loss={best_val:.6f})")
+            if writer is not None:
+                writer.add_scalar("val/best_loss", best_val, epoch + 1)
+
+    if writer is not None:
+        writer.flush()
+        writer.close()
 
 
 if __name__ == "__main__":

@@ -2,21 +2,38 @@ dataset_type: short_metaworld
 data_root: data/short-metaworld-vla
 train_jsonl: ""
 val_jsonl: ""
-val_ratio: 0.1
+val_ratio: 0.15
 
 vision_model_name: google/siglip2-base-patch16-224
 text_model_name: google/siglip2-base-patch16-224
+separate_backbones: false
 image_size: 224
 freeze_vision: true
 freeze_text: true
 
 # Fusion/projection
+fusion_type: cross_attn
 proj_dim: 512
+fusion_hidden_dim: 1024
+fusion_num_layers: 3
+fusion_num_heads: 8
+fusion_dropout: 0.1
 normalize_embeddings: true
+
+# Action head
+action_head_type: moe # moe, mlp
+action_mlp_hidden_dim: 512
+action_mlp_layers: 2
+action_mlp_dropout: 0.1
+use_geometry_features: true
+geometry_dim: 6
+temporal_context: 4
+moe_load_balance_weight: 0.001
+router_condition: text
 
 # Data
 action_dim: 4
-num_workers: 3
+num_workers: 8
 
 # Action scaling/normalization
 normalize_action_targets: true
@@ -25,10 +42,12 @@ learnable_action_scale: true
 action_scale_init: 1.0
 
 # Optimization
-epochs: 30
-batch_size: 8
-grad_accum_steps: 4
-learning_rate: 1e-4
+loss_type: huber
+huber_delta: 0.5
+epochs: 50
+batch_size: 32
+grad_accum_steps: 2
+learning_rate: 5e-5
 weight_decay: 1e-2
 grad_clip_norm: 1.0
 use_fp16: true
@@ -36,5 +55,5 @@ use_fp16: true
 # Runtime
 seed: 42
 device: cuda
-out_dir: checkpoints
+out_dir: checkpoints_linear
 save_best_by_val: true
