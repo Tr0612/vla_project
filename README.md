@@ -2,8 +2,9 @@
 
 Compact Vision-Language-Action training/evaluation stack for MetaWorld-style manipulation tasks.
 
- [VLA Project (SigLIP2 + MoE/ACT)](#vla-project-siglip2--moeact)
+## Table of Contents
 - [VLA Project (SigLIP2 + MoE/ACT)](#vla-project-siglip2--moeact)
+  - [Table of Contents](#table-of-contents)
   - [Repo Structure](#repo-structure)
   - [Important Links](#important-links)
   - [Environment setup](#environment-setup)
@@ -44,10 +45,13 @@ Compact Vision-Language-Action training/evaluation stack for MetaWorld-style man
 
 ## Important Links
 
-Dataset : [](https://huggingface.co/datasets/Tr0612/ShortMetaWorld/tree/main)
-Checkpoints : [](https://huggingface.co/Tr0612/vla-checkpoints/tree/main)
-Experiment Outpus : [](https://huggingface.co/datasets/Tr0612/vla-outputs)
-Demo (small dataset with inference) : [](https://huggingface.co/datasets/Tr0612/button-press-mini-demo/tree/main)
+Dataset : [ShortMetaWorld](https://huggingface.co/datasets/Tr0612/ShortMetaWorld/tree/main)
+
+Checkpoints : [VLA Checkpoints](https://huggingface.co/Tr0612/vla-checkpoints/tree/main)
+
+Experiment Outputs : https://huggingface.co/datasets/Tr0612/vla-outputs
+
+Demo (small dataset with inference) : [Button Press Demo](https://huggingface.co/datasets/Tr0612/button-press-mini-demo/tree/main)
 
 ## Environment setup
 
