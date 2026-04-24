@@ -2,12 +2,38 @@
 
 Compact Vision-Language-Action training/evaluation stack for MetaWorld-style manipulation tasks.
 
-## What this repo includes
+## Repo Contents
 
 - Core training/inference scripts: `train.py`, `infer.py`, `eval_rollout.py`, `viz_actions.py`
 - Config-driven experiments in `experiments/`
 - Pre-collected dataset roots under `data/`
 - Rollout/analysis outputs under `Output/`
+
+ [VLA Project (SigLIP2 + MoE/ACT)](#vla-project-siglip2--moeact)
+- [VLA Project (SigLIP2 + MoE/ACT)](#vla-project-siglip2--moeact)
+  - [Repo Contents](#repo-contents)
+  - [Environment setup](#environment-setup)
+    - [Option A: `uv` (recommended)](#option-a-uv-recommended)
+    - [Option B: existing helper script](#option-b-existing-helper-script)
+  - [Quick Demo (Run First)](#quick-demo-run-first)
+  - [Dataset: how to obtain it](#dataset-how-to-obtain-it)
+    - [source](#source)
+    - [Fresh clone with Git LFS](#fresh-clone-with-git-lfs)
+    - [Verify dataset structure](#verify-dataset-structure)
+  - [Quick start: single training run](#quick-start-single-training-run)
+  - [Run experiment suites](#run-experiment-suites)
+    - [Full presentation pipeline (train + held-out train + eval + summaries)](#full-presentation-pipeline-train--held-out-train--eval--summaries)
+    - [Re-run only holdout evaluation and summaries](#re-run-only-holdout-evaluation-and-summaries)
+    - [Seen-task evaluation only](#seen-task-evaluation-only)
+    - [Peg-only stress test](#peg-only-stress-test)
+  - [Inference and rollout](#inference-and-rollout)
+    - [Single image inference](#single-image-inference)
+    - [Button-press mini demo (self-contained)](#button-press-mini-demo-self-contained)
+    - [Rollout eval with video recording](#rollout-eval-with-video-recording)
+    - [Visualize prediction vs ground truth](#visualize-prediction-vs-ground-truth)
+  - [Checkpoint layout](#checkpoint-layout)
+  - [Rollout videos and outputs](#rollout-videos-and-outputs)
+  - [Notes](#notes)
 
 ## Environment setup
 
@@ -27,6 +53,25 @@ pip install numpy pillow tqdm pyyaml matplotlib tensorboard pandas opencv-python
 source env_setup.bash
 ```
 
+## Quick Demo (Run First)
+
+Run the button-press mini demo:
+
+```bash
+./.venv/bin/python demo/run_button_press_demo.py
+```
+
+Run all 5 samples:
+
+```bash
+./.venv/bin/python demo/run_button_press_demo.py --max-samples 0
+```
+
+Requires:
+
+- Dataset: `https://huggingface.co/datasets/Tr0612/ShortMetaWorld`
+- Checkpoints: `https://huggingface.co/Tr0612/vla-checkpoints`
+
 ## Dataset: how to obtain it
 
 This project is wired for `short_metaworld` format using:
@@ -34,19 +79,25 @@ This project is wired for `short_metaworld` format using:
 - `data/short-metaworld-vla/short-MetaWorld/img_only/...`
 - `data/short-metaworld-vla/short-MetaWorld/r3m-processed/r3m_MT10_20/*.pkl`
 
-### Preferred source
+### source
 
 The dataset remote used here is:
 
-- `[https://huggingface.co/datasets/hz1919810/short-metaworld-vla](https://huggingface.co/datasets/Tr0612/ShortMetaWorld)`
+- `https://huggingface.co/datasets/Tr0612/ShortMetaWorld`
 
 ### Fresh clone with Git LFS
 
 ```bash
 cd data
+git clone https://huggingface.co/datasets/Tr0612/ShortMetaWorld
+mv ShortMetaWorld short-metaworld-vla
+```
+
+If your clone did not fetch large files, run:
+
+```bash
+cd data/short-metaworld-vla
 git lfs install
-git clone https://huggingface.co/datasets/hz1919810/short-metaworld-vla
-cd short-metaworld-vla
 git lfs pull
 ```
 
@@ -151,6 +202,18 @@ Checkpoints used by the runner:
 - `checkpoints/checkpoints_stage2_moe_full_unfreeze/best.pt`
 - `checkpoints/checkpoints_stage2_moe_full_peg_only/best.pt`
 
+If you do not have local checkpoints, download from:
+
+- `https://huggingface.co/Tr0612/vla-checkpoints`
+
+```bash
+cd /path/to/vla_project
+git clone https://huggingface.co/Tr0612/vla-checkpoints checkpoints_hf
+cd checkpoints_hf && git lfs pull && cd ..
+mkdir -p checkpoints
+cp -r checkpoints_hf/checkpoints_stage2_* checkpoints/
+```
+
 ### Rollout eval with video recording
 
 ```bash
@@ -175,27 +238,30 @@ python viz_actions.py \
 
 ## Checkpoint layout
 
-Top-level checkpoint directory:
+Checkpoint source (published):
+
+- `https://huggingface.co/Tr0612/vla-checkpoints`
+
+Expected local layout for this repo:
 
 - `checkpoints/`
-
-Examples:
-
-- `checkpoints/best.pt` (legacy/base run)
-- `checkpoints/checkpoints_linear/`
 - `checkpoints/checkpoints_stage2_no_moe_unfreeze/`
 - `checkpoints/checkpoints_stage2_moe_text_unfreeze/`
 - `checkpoints/checkpoints_stage2_moe_full_unfreeze/`
-- `checkpoints/checkpoints_stage2_act_unfreeze/`
-- `checkpoints/checkpoints_stage2_act_moe_unfreeze/`
+- `checkpoints/checkpoints_stage2_moe_full_peg_only/`
 
-Each experiment folder typically contains:
+Minimal files required per checkpoint folder for inference:
 
 - `best.pt`
+- `action_mean.npy`
+- `action_std.npy`
+
+Optional auxiliary files:
+
 - `latest.pt`
 - `train_config.json`
-- optional `tensorboard/`
-- optional router logs (`moe_router_weights.csv`, `moe_router_entropy.csv`)
+- `tensorboard/`
+- router logs (`moe_router_weights.csv`, `moe_router_entropy.csv`)
 
 ## Rollout videos and outputs
 
