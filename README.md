@@ -12,7 +12,7 @@ Compact Vision-Language-Action training/evaluation stack for MetaWorld-style man
     - [Option B: existing helper script](#option-b-existing-helper-script)
   - [Quick Demo (Run First)](#quick-demo-run-first)
   - [Dataset: how to obtain it](#dataset-how-to-obtain-it)
-    - [source](#source)
+    - [Source](#source)
     - [Fresh clone with Git LFS](#fresh-clone-with-git-lfs)
   - [Quick start: single training run](#quick-start-single-training-run)
   - [Run experiment suites](#run-experiment-suites)
@@ -28,7 +28,7 @@ Compact Vision-Language-Action training/evaluation stack for MetaWorld-style man
   - [Notes](#notes)
   - [File-by-file guide](#file-by-file-guide)
     - [Core source (`src/vla_stack/`)](#core-source-srcvla_stack)
-    - [compatibility launchers](#compatibility-launchers)
+    - [Compatibility launchers](#compatibility-launchers)
     - [Experiment and workflow files](#experiment-and-workflow-files)
     - [Data and outputs](#data-and-outputs)
   - [File Trees (Separate Reference)](#file-trees-separate-reference)
@@ -100,7 +100,7 @@ This project is wired for `short_metaworld` format using:
 - `data/short-metaworld-vla/short-MetaWorld/img_only/...`
 - `data/short-metaworld-vla/short-MetaWorld/r3m-processed/r3m_MT10_20/*.pkl`
 
-### source
+### Source
 
 The dataset remote used here is:
 
@@ -243,7 +243,7 @@ Generated artifacts are under:
 - `src/vla_stack/main.py`: Minimal package-level starter entrypoint.
 - `src/vla_stack/__init__.py`: Package marker for `vla_stack`.
 
-### compatibility launchers
+### Compatibility launchers
 
 - `train.py`, `infer.py`, `eval_rollout.py`, `viz_actions.py`, `main.py`: Thin wrappers that add `src/` to `PYTHONPATH` and call the corresponding `vla_stack.*` module, so existing commands still work.
 - `config.py`, `dataset.py`, `model.py`: Compatibility re-export shims for legacy imports.
