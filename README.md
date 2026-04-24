@@ -2,16 +2,17 @@
 
 Compact Vision-Language-Action training/evaluation stack for MetaWorld-style manipulation tasks.
 
-## Repo Contents
+## Repo Structure
 
-- Core training/inference scripts: `train.py`, `infer.py`, `eval_rollout.py`, `viz_actions.py`
+- Core source package: `src/vla_stack/` (`train.py`, `infer.py`, `eval_rollout.py`, `viz_actions.py`, `model.py`, `dataset.py`, `config.py`)
+- Root `*.py` files are lightweight compatibility launchers (so commands like `python train.py` still work)
 - Config-driven experiments in `experiments/`
 - Pre-collected dataset roots under `data/`
 - Rollout/analysis outputs under `Output/`
 
  [VLA Project (SigLIP2 + MoE/ACT)](#vla-project-siglip2--moeact)
 - [VLA Project (SigLIP2 + MoE/ACT)](#vla-project-siglip2--moeact)
-  - [Repo Contents](#repo-contents)
+  - [Repo Structure](#repo-structure)
   - [Environment setup](#environment-setup)
     - [Option A: `uv` (recommended)](#option-a-uv-recommended)
     - [Option B: existing helper script](#option-b-existing-helper-script)
