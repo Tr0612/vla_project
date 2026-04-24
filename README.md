@@ -2,17 +2,10 @@
 
 Compact Vision-Language-Action training/evaluation stack for MetaWorld-style manipulation tasks.
 
-## Repo Structure
-
-- Core source package: `src/vla_stack/` (`train.py`, `infer.py`, `eval_rollout.py`, `viz_actions.py`, `model.py`, `dataset.py`, `config.py`)
-- Root `*.py` files are lightweight compatibility launchers (so commands like `python train.py` still work)
-- Config-driven experiments in `experiments/`
-- Pre-collected dataset roots under `data/`
-- Rollout/analysis outputs under `Output/`
-
  [VLA Project (SigLIP2 + MoE/ACT)](#vla-project-siglip2--moeact)
 - [VLA Project (SigLIP2 + MoE/ACT)](#vla-project-siglip2--moeact)
   - [Repo Structure](#repo-structure)
+  - [Important Links](#important-links)
   - [Environment setup](#environment-setup)
     - [Option A: `uv` (recommended)](#option-a-uv-recommended)
     - [Option B: existing helper script](#option-b-existing-helper-script)
@@ -40,6 +33,21 @@ Compact Vision-Language-Action training/evaluation stack for MetaWorld-style man
     - [Root compatibility launchers](#root-compatibility-launchers)
     - [Experiment and workflow files](#experiment-and-workflow-files)
     - [Data and outputs](#data-and-outputs)
+
+## Repo Structure
+
+- Core source package: `src/vla_stack/` (`train.py`, `infer.py`, `eval_rollout.py`, `viz_actions.py`, `model.py`, `dataset.py`, `config.py`)
+- Root `*.py` files are lightweight compatibility launchers (so commands like `python train.py` still work)
+- Config-driven experiments in `experiments/`
+- Pre-collected dataset roots under `data/`
+- Rollout/analysis outputs under `Output/`
+
+## Important Links
+
+Dataset : [](https://huggingface.co/datasets/Tr0612/ShortMetaWorld/tree/main)
+Checkpoints : [](https://huggingface.co/Tr0612/vla-checkpoints/tree/main)
+Experiment Outpus : [](https://huggingface.co/datasets/Tr0612/vla-outputs)
+Demo (small dataset with inference) : [](https://huggingface.co/datasets/Tr0612/button-press-mini-demo/tree/main)
 
 ## Environment setup
 
