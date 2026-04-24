@@ -1,0 +1,13 @@
+# *.mp4 filter=lfs diff=lfs merge=lfs -text
+# checkpoints/checkpoints_stage2_no_moe_unfreeze/action_mean.npy filter=lfs diff=lfs merge=lfs -text
+# checkpoints/checkpoints_stage2_moe_text_unfreeze/best.pt filter=lfs diff=lfs merge=lfs -text
+# checkpoints/checkpoints_stage2_moe_full_unfreeze/best.pt filter=lfs diff=lfs merge=lfs -text
+# checkpoints/checkpoints_stage2_moe_full_unfreeze/action_mean.npy filter=lfs diff=lfs merge=lfs -text
+# checkpoints/checkpoints_stage2_moe_full_unfreeze/action_std.npy filter=lfs diff=lfs merge=lfs -text
+# checkpoints/checkpoints_stage2_moe_full_peg_only/best.pt filter=lfs diff=lfs merge=lfs -text
+# checkpoints/checkpoints_stage2_moe_full_peg_only/action_mean.npy filter=lfs diff=lfs merge=lfs -text
+# checkpoints/checkpoints_stage2_moe_full_peg_only/action_std.npy filter=lfs diff=lfs merge=lfs -text
+# checkpoints/checkpoints_stage2_no_moe_unfreeze/best.pt filter=lfs diff=lfs merge=lfs -text
+# checkpoints/checkpoints_stage2_no_moe_unfreeze/action_std.npy filter=lfs diff=lfs merge=lfs -text
+# checkpoints/checkpoints_stage2_moe_text_unfreeze/action_mean.npy filter=lfs diff=lfs merge=lfs -text
+# checkpoints/checkpoints_stage2_moe_text_unfreeze/action_std.npy filter=lfs diff=lfs merge=lfs -text

@@ -1,0 +1,27 @@
+# Python cache and env
+__pycache__/
+*.pyc
+.venv/
+.env
+
+# Tooling/cache
+.cache/
+.DS_Store
+
+# Local artifacts / checkpoints notes not tracked
+push_notes.md
+siglip2_config.yaml
+siglip_distilbert_config.yaml
+test_corner2.mp4
+data/short-metaworld-vla/
+checkpoints/
+experiments/
+plots_*/
+
+Output/
+data/
+plots/
+plots_door_open_v3/
+plots_moe/
+checkpoints/
+demo/
