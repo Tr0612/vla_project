@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .venv/
 .env
+uv.lock
 
 # Tooling/cache
 .cache/
@@ -20,8 +21,5 @@ experiments/
 
 Output/
 data/
-plots/
-plots_door_open_v3/
-plots_moe/
 checkpoints/
 demo/
