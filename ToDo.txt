@@ -1,0 +1,11 @@
+Done
+1. Replace concatenation with cross-attention or transformer fusion
+2. MoE Action Head, need to replace final linear head with mixture of experts
+3. Should have separate models 
+4. Maybe I should add more layers
+
+Pending 
+1. Model cannot predict correct magnitude so need to add Proprioceptive State i.e Joint Torques,Gripper force sensor Task State
+2. Implement Huber Loss or Action Magnitude Aware loss, MSE penalizes large actions quadratically
+3. Action Space normalization
+4. Action Denormalization

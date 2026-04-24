@@ -1,0 +1,53 @@
+dataset_type: short_metaworld
+data_root: data/short-metaworld-vla
+val_ratio: 0.15
+
+vision_model_name: google/siglip2-base-patch16-224
+text_model_name: google/siglip2-base-patch16-224
+separate_backbones: false
+image_size: 224
+freeze_vision: true
+freeze_text: true
+
+fusion_type: cross_attn
+proj_dim: 512
+fusion_hidden_dim: 1024
+fusion_num_layers: 3
+fusion_num_heads: 8
+fusion_dropout: 0.1
+normalize_embeddings: true
+
+action_head_type: mlp
+action_mlp_hidden_dim: 512
+action_mlp_layers: 2
+action_mlp_dropout: 0.1
+
+use_geometry_features: true
+geometry_dim: 6
+temporal_context: 4
+
+action_dim: 4
+num_workers: 8
+
+normalize_action_targets: true
+action_norm_eps: 1e-6
+learnable_action_scale: true
+action_scale_init: 1.0
+
+loss_type: huber
+huber_delta: 0.5
+epochs: 80
+batch_size: 32
+grad_accum_steps: 2
+learning_rate: 5e-5
+weight_decay: 1e-2
+grad_clip_norm: 1.0
+use_fp16: true
+
+seed: 42
+device: cuda
+out_dir: checkpoints/checkpoints_stage2_no_moe
+save_best_by_val: true
+
+early_stopping_patience: 8
+early_stopping_min_delta: 0.0005
