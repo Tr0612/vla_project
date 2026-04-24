@@ -43,6 +43,8 @@ Compact Vision-Language-Action training/evaluation stack for MetaWorld-style man
 
 ## Environment setup
 
+Clone this repo : 
+
 ### Option A: `uv` (recommended)
 
 ```bash
@@ -75,7 +77,7 @@ Run all 5 samples:
 
 Requires:
 
-- Dataset: `https://huggingface.co/datasets/Tr0612/ShortMetaWorld`
+- Dataset: [dataset](https://huggingface.co/datasets/Tr0612/ShortMetaWorld)
 - Checkpoints: `https://huggingface.co/Tr0612/vla-checkpoints`
 
 ## Dataset: how to obtain it
