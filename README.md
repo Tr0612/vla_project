@@ -38,7 +38,7 @@ This project is wired for `short_metaworld` format using:
 
 The dataset remote used here is:
 
-- `https://huggingface.co/datasets/hz1919810/short-metaworld-vla`
+- `[https://huggingface.co/datasets/hz1919810/short-metaworld-vla](https://huggingface.co/datasets/Tr0612/ShortMetaWorld)`
 
 ### Fresh clone with Git LFS
 
