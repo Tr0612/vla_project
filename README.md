@@ -34,6 +34,8 @@ Compact Vision-Language-Action training/evaluation stack for MetaWorld-style man
     - [Root compatibility launchers](#root-compatibility-launchers)
     - [Experiment and workflow files](#experiment-and-workflow-files)
     - [Data and outputs](#data-and-outputs)
+  - [File Trees (Separate Reference)](#file-trees-separate-reference)
+    - [Project tree (after cloning this repo)](#project-tree-after-cloning-this-repo)
 
 ## Repo Structure
 
@@ -56,6 +58,8 @@ Demo (small dataset with inference) : [Button Press Demo](https://huggingface.co
 ## Environment setup
 
 Clone this repo : 
+
+Make sure the folder structure is same as given in [Folder Structure](#file-trees-separate-reference)
 
 ### Option A: uv (recommended)
 
@@ -335,3 +339,52 @@ du -sh checkpoints Output plots*
 - `checkpoints/`: Model checkpoints and normalization stats (`best.pt`, `action_mean.npy`, `action_std.npy`).
 - `Output/`: Rollout videos and experiment outputs.
 - `plots/`, `plots_moe/`, `plots_door_open_v3/`: Action-quality visualization outputs.
+
+## File Trees (Separate Reference)
+
+### Project tree (after cloning this repo)
+
+```text
+vla_project/
+├── README.md
+├── pyproject.toml
+├── env_setup.bash
+├── src/
+│   └── vla_stack/
+│       ├── __init__.py
+│       ├── config.py
+│       ├── dataset.py
+│       ├── model.py
+│       ├── train.py
+│       ├── infer.py
+│       ├── eval_rollout.py
+│       ├── viz_actions.py
+│       └── main.py
+├── train.py
+├── infer.py
+├── eval_rollout.py
+├── viz_actions.py
+├── main.py
+├── config.py
+├── dataset.py
+├── model.py
+├── demo/
+│   ├── run_button_press_demo.py
+│   └── button_press_mini/
+├── checkpoints/
+│   └── checkpoints_stage2_*/
+├── experiments/
+├── dataset_scripts/
+├── data/
+│   └── short-metaworld-vla/
+│       ├── mt50_task_prompts.json
+│       ├── short-MetaWorld/
+│       │   ├── img_only/
+│       │   │   ├── button-press-topdown-v3/
+│       │   │   ├── door-open-v3/
+│       │   │   └── <other-tasks>/
+│       │   └── r3m-processed/
+│       │       └── r3m_MT10_20/
+│       │           └── *.pkl
+│       └── README.md
+└── Output/
