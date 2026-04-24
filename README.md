@@ -1,9 +1,9 @@
-# VLA Project (SigLIP2 + MoE/ACT)
+# VLA Project (CompactVLA+MoE)
 
 Compact Vision-Language-Action training/evaluation stack for MetaWorld-style manipulation tasks.
 
 ## Table of Contents
-- [VLA Project (SigLIP2 + MoE/ACT)](#vla-project-siglip2--moeact)
+- [VLA Project (CompactVLA+MoE)](#vla-project-compactvlamoe)
   - [Table of Contents](#table-of-contents)
   - [Repo Structure](#repo-structure)
   - [Important Links](#important-links)
@@ -14,7 +14,6 @@ Compact Vision-Language-Action training/evaluation stack for MetaWorld-style man
   - [Dataset: how to obtain it](#dataset-how-to-obtain-it)
     - [source](#source)
     - [Fresh clone with Git LFS](#fresh-clone-with-git-lfs)
-    - [Verify dataset structure](#verify-dataset-structure)
   - [Quick start: single training run](#quick-start-single-training-run)
   - [Run experiment suites](#run-experiment-suites)
     - [Full presentation pipeline (train + held-out train + eval + summaries)](#full-presentation-pipeline-train--held-out-train--eval--summaries)
@@ -23,19 +22,17 @@ Compact Vision-Language-Action training/evaluation stack for MetaWorld-style man
     - [Peg-only stress test](#peg-only-stress-test)
   - [Inference and rollout](#inference-and-rollout)
     - [Single image inference](#single-image-inference)
-    - [Button-press mini demo (self-contained)](#button-press-mini-demo-self-contained)
     - [Rollout eval with video recording](#rollout-eval-with-video-recording)
     - [Visualize prediction vs ground truth](#visualize-prediction-vs-ground-truth)
-  - [Checkpoint layout](#checkpoint-layout)
   - [Rollout videos and outputs](#rollout-videos-and-outputs)
   - [Notes](#notes)
   - [File-by-file guide](#file-by-file-guide)
     - [Core source (`src/vla_stack/`)](#core-source-srcvla_stack)
-    - [Root compatibility launchers](#root-compatibility-launchers)
+    - [compatibility launchers](#compatibility-launchers)
     - [Experiment and workflow files](#experiment-and-workflow-files)
     - [Data and outputs](#data-and-outputs)
   - [File Trees (Separate Reference)](#file-trees-separate-reference)
-    - [Project tree (after cloning this repo)](#project-tree-after-cloning-this-repo)
+    - [Project tree (after cloning this repo + cloning dataset + downloading checkpoints)](#project-tree-after-cloning-this-repo--cloning-dataset--downloading-checkpoints)
 
 ## Repo Structure
 
@@ -125,18 +122,6 @@ git lfs install
 git lfs pull
 ```
 
-### Verify dataset structure
-
-```bash
-cd /path/to/vla_project
-find data/short-metaworld-vla -maxdepth 3 -type d | head -n 30
-du -sh data/short-metaworld-vla
-```
-
-If you already have the dataset on another disk, copy/symlink it into:
-
-- `data/short-metaworld-vla`
-
 ## Quick start: single training run
 
 ```bash
@@ -192,40 +177,6 @@ python infer.py \
   --instruction "Press the button"
 ```
 
-### Button-press mini demo (self-contained)
-
-Use the tiny dataset in `demo/button_press_mini/` to run quick inference across the 4 selected checkpoints.
-
-Demo files:
-
-- `demo/button_press_mini/samples.jsonl` (5 samples with image/instruction/state/gt_action)
-- `demo/button_press_mini/images/` (copied JPEG frames)
-- `demo/button_press_mini/manifest.json` (metadata)
-- `demo/run_button_press_demo.py` (runner script)
-
-Quick run (default: 1 sample):
-
-```bash
-./.venv/bin/python demo/run_button_press_demo.py
-```
-
-Run all 5 samples:
-
-```bash
-./.venv/bin/python demo/run_button_press_demo.py --max-samples 0
-```
-
-Output file:
-
-- `demo/button_press_mini/inference_results.jsonl`
-
-Checkpoints used by the runner:
-
-- `checkpoints/checkpoints_stage2_no_moe_unfreeze/best.pt`
-- `checkpoints/checkpoints_stage2_moe_text_unfreeze/best.pt`
-- `checkpoints/checkpoints_stage2_moe_full_unfreeze/best.pt`
-- `checkpoints/checkpoints_stage2_moe_full_peg_only/best.pt`
-
 If you do not have local checkpoints, download from:
 
 - [VLA Checkpoints](https://huggingface.co/Tr0612/vla-checkpoints)
@@ -260,33 +211,6 @@ python viz_actions.py \
   --out-dir plots
 ```
 
-## Checkpoint layout
-
-Checkpoint source (published):
-
-- [VLA Checkpoints](https://huggingface.co/Tr0612/vla-checkpoints)
-
-Expected local layout for this repo:
-
-- `checkpoints/`
-- `checkpoints/checkpoints_stage2_no_moe_unfreeze/`
-- `checkpoints/checkpoints_stage2_moe_text_unfreeze/`
-- `checkpoints/checkpoints_stage2_moe_full_unfreeze/`
-- `checkpoints/checkpoints_stage2_moe_full_peg_only/`
-
-Minimal files required per checkpoint folder for inference:
-
-- `best.pt`
-- `action_mean.npy`
-- `action_std.npy`
-
-Optional auxiliary files:
-
-- `latest.pt`
-- `train_config.json`
-- `tensorboard/`
-- router logs (`moe_router_weights.csv`, `moe_router_entropy.csv`)
-
 ## Rollout videos and outputs
 
 Generated artifacts are under:
@@ -295,17 +219,15 @@ Generated artifacts are under:
 - `Output/.../videos/` (rollout videos)
 - `plots*/` (diagnostic plots)
 
-To inspect size quickly:
-
-```bash
-du -sh checkpoints Output plots*
-```
+---
 
 ## Notes
 
 - Keep backbone freezing for lower VRAM runs; unfreeze last layers only after stable baseline.
 - Prefer explicit `--config` in all commands.
 - For RTX 50-series (`sm_120`), use CUDA 12.8+ PyTorch wheels.
+
+---
 
 ## File-by-file guide
 
@@ -321,7 +243,7 @@ du -sh checkpoints Output plots*
 - `src/vla_stack/main.py`: Minimal package-level starter entrypoint.
 - `src/vla_stack/__init__.py`: Package marker for `vla_stack`.
 
-### Root compatibility launchers
+### compatibility launchers
 
 - `train.py`, `infer.py`, `eval_rollout.py`, `viz_actions.py`, `main.py`: Thin wrappers that add `src/` to `PYTHONPATH` and call the corresponding `vla_stack.*` module, so existing commands still work.
 - `config.py`, `dataset.py`, `model.py`: Compatibility re-export shims for legacy imports.
@@ -342,7 +264,7 @@ du -sh checkpoints Output plots*
 
 ## File Trees (Separate Reference)
 
-### Project tree (after cloning this repo)
+### Project tree (after cloning this repo + cloning dataset + downloading checkpoints)
 
 ```text
 vla_project/
