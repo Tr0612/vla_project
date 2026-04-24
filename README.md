@@ -35,6 +35,11 @@ Compact Vision-Language-Action training/evaluation stack for MetaWorld-style man
   - [Checkpoint layout](#checkpoint-layout)
   - [Rollout videos and outputs](#rollout-videos-and-outputs)
   - [Notes](#notes)
+  - [File-by-file guide](#file-by-file-guide)
+    - [Core source (`src/vla_stack/`)](#core-source-srcvla_stack)
+    - [Root compatibility launchers](#root-compatibility-launchers)
+    - [Experiment and workflow files](#experiment-and-workflow-files)
+    - [Data and outputs](#data-and-outputs)
 
 ## Environment setup
 
@@ -283,3 +288,37 @@ du -sh checkpoints Output plots*
 - Keep backbone freezing for lower VRAM runs; unfreeze last layers only after stable baseline.
 - Prefer explicit `--config` in all commands.
 - For RTX 50-series (`sm_120`), use CUDA 12.8+ PyTorch wheels.
+
+## File-by-file guide
+
+### Core source (`src/vla_stack/`)
+
+- `src/vla_stack/config.py`: Defines `TrainConfig`, default hyperparameters, and config loading/override helpers.
+- `src/vla_stack/dataset.py`: Dataset adapters and loaders; converts raw samples into the unified schema used by training and evaluation.
+- `src/vla_stack/model.py`: VLA policy architecture (SigLIP/text encoders, fusion blocks, action heads including MLP/MoE/ACT variants).
+- `src/vla_stack/train.py`: Main training entrypoint, dataloader setup, optimization loop, checkpoint saving, and validation metrics.
+- `src/vla_stack/infer.py`: Single-image inference script; loads checkpoint + prompt/image/state and prints predicted action.
+- `src/vla_stack/eval_rollout.py`: MetaWorld rollout evaluator; runs episodes, computes success, and can record videos.
+- `src/vla_stack/viz_actions.py`: Offline diagnostics for prediction vs ground-truth actions; writes plots/arrays for analysis.
+- `src/vla_stack/main.py`: Minimal package-level starter entrypoint.
+- `src/vla_stack/__init__.py`: Package marker for `vla_stack`.
+
+### Root compatibility launchers
+
+- `train.py`, `infer.py`, `eval_rollout.py`, `viz_actions.py`, `main.py`: Thin wrappers that add `src/` to `PYTHONPATH` and call the corresponding `vla_stack.*` module, so existing commands still work.
+- `config.py`, `dataset.py`, `model.py`: Compatibility re-export shims for legacy imports.
+
+### Experiment and workflow files
+
+- `experiments/`: YAML configs and runnable shell pipelines (`run_all.sh`, `run_seen_eval.sh`, `run_peg_only.sh`).
+- `demo/run_button_press_demo.py`: Small demo runner that executes inference over a compact button-press mini dataset.
+- `dataset_scripts/`: One-off dataset collection/conversion utilities.
+- `env_setup.bash`: Helper script for environment setup.
+
+### Data and outputs
+
+- `data/`: Local dataset root (`short-metaworld-vla` expected by default config).
+- `checkpoints/`: Model checkpoints and normalization stats (`best.pt`, `action_mean.npy`, `action_std.npy`).
+- `Output/`: Rollout videos and experiment outputs.
+- `plots/`, `plots_moe/`, `plots_door_open_v3/`: Action-quality visualization outputs.
+
