@@ -8,7 +8,7 @@ Compact Vision-Language-Action training/evaluation stack for MetaWorld-style man
   - [Repo Structure](#repo-structure)
   - [Important Links](#important-links)
   - [Environment setup](#environment-setup)
-    - [Option A: `uv` (recommended)](#option-a-uv-recommended)
+    - [Option A: uv (recommended)](#option-a-uv-recommended)
     - [Option B: existing helper script](#option-b-existing-helper-script)
   - [Quick Demo (Run First)](#quick-demo-run-first)
   - [Dataset: how to obtain it](#dataset-how-to-obtain-it)
@@ -57,7 +57,7 @@ Demo (small dataset with inference) : [Button Press Demo](https://huggingface.co
 
 Clone this repo : 
 
-### Option A: `uv` (recommended)
+### Option A: uv (recommended)
 
 ```bash
 uv venv .venv
