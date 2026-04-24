@@ -77,8 +77,8 @@ Run all 5 samples:
 
 Requires:
 
-- Dataset: [dataset](https://huggingface.co/datasets/Tr0612/ShortMetaWorld)
-- Checkpoints: `https://huggingface.co/Tr0612/vla-checkpoints`
+- Dataset: [ShortMetaWorld Dataset](https://huggingface.co/datasets/Tr0612/ShortMetaWorld)
+- Checkpoints: [VLA Checkpoints](https://huggingface.co/Tr0612/vla-checkpoints)
 
 ## Dataset: how to obtain it
 
@@ -91,7 +91,7 @@ This project is wired for `short_metaworld` format using:
 
 The dataset remote used here is:
 
-- `https://huggingface.co/datasets/Tr0612/ShortMetaWorld`
+- [ShortMetaWorld Dataset](https://huggingface.co/datasets/Tr0612/ShortMetaWorld)
 
 ### Fresh clone with Git LFS
 
@@ -212,7 +212,7 @@ Checkpoints used by the runner:
 
 If you do not have local checkpoints, download from:
 
-- `https://huggingface.co/Tr0612/vla-checkpoints`
+- [VLA Checkpoints](https://huggingface.co/Tr0612/vla-checkpoints)
 
 ```bash
 cd /path/to/vla_project
@@ -248,7 +248,7 @@ python viz_actions.py \
 
 Checkpoint source (published):
 
-- `https://huggingface.co/Tr0612/vla-checkpoints`
+- [VLA Checkpoints](https://huggingface.co/Tr0612/vla-checkpoints)
 
 Expected local layout for this repo:
 
@@ -323,4 +323,3 @@ du -sh checkpoints Output plots*
 - `checkpoints/`: Model checkpoints and normalization stats (`best.pt`, `action_mean.npy`, `action_std.npy`).
 - `Output/`: Rollout videos and experiment outputs.
 - `plots/`, `plots_moe/`, `plots_door_open_v3/`: Action-quality visualization outputs.
-
