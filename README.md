@@ -54,7 +54,7 @@ Demo (small dataset with inference) : [Button Press Demo](https://huggingface.co
 
 ## Environment setup
 
-Clone this repo : 
+Clone this repo : https://github.com/Tr0612/vla_project
 
 Make sure the folder structure is same as given in [Folder Structure](#file-trees-separate-reference)
 
